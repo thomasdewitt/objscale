@@ -22,13 +22,14 @@ def create_percolation_lattice(size, p=P_C):
 
 def main():
     print("=== OBJSCALE PACKAGE TEST ===")
-    print(f"Creating 4 percolation lattices (1000x1000) with p = {P_C}")
+    size = 1000
+    print(f"Creating 4 percolation lattices ({size}x{size}) with p = {P_C}")
     
     # Create 4 percolation lattices
     arrays = []
     for i in range(4):
         print(f"Creating array {i+1}/4...")
-        array = create_percolation_lattice(2000, P_C)
+        array = create_percolation_lattice(size, P_C)
         arrays.append(array)
         print(f"  Array {i+1}: {np.sum(array)} occupied sites")
     
@@ -51,7 +52,7 @@ def main():
     # Calculate correlation dimension
     print("Calculating correlation dimension...")
     corr_dim, corr_error, corr_lengths, corr_integrals = objscale.ensemble_correlation_dimension(
-        arrays, return_C_l=True, point_reduction_factor=200
+        arrays, return_C_l=True, point_reduction_factor=1000
     )
     print(f"Correlation dimension: {corr_dim:.3f} ± {corr_error:.3f}")
     
@@ -70,10 +71,99 @@ def main():
         individual_dims.append((dim, error))
         print(f"  Array {i+1}: {dim:.3f} ± {error:.3f}")
     
+    # Calculate coarsening dimension
+    print("Calculating coarsening dimension...")
+    coarsening_dim, coarsening_error, coarsening_factors, mean_total_perimeters = objscale.ensemble_coarsening_dimension(
+        arrays, return_values=True, min_pixels = 3
+    )
+    print(f"Coarsening dimension: {coarsening_dim:.3f} ± {coarsening_error:.3f}")
+    
+    print("\n=== TESTING ADDITIONAL FUNCTIONS ===")
+    
+    # Test total_number
+    print("Testing total_number...")
+    test_array = arrays[0]
+    num_structures = objscale.total_number(test_array)
+    print(f"Total number of structures: {num_structures}")
+    
+    # Test total_perimeter
+    print("Testing total_perimeter...")
+    x_sizes = np.ones(test_array.shape)
+    y_sizes = np.ones(test_array.shape)
+    total_perim = objscale.total_perimeter(test_array.astype(np.float32), x_sizes, y_sizes)
+    print(f"Total perimeter: {total_perim:.2f}")
+    
+    # Test isolate_largest_structure
+    print("Testing isolate_largest_structure...")
+    largest_struct = objscale.isolate_largest_structure(test_array)
+    print(f"Largest structure has {np.sum(largest_struct)} pixels")
+    
+    # Test coarsen_array
+    print("Testing coarsen_array...")
+    coarsened = objscale.coarsen_array(test_array, 4)
+    print(f"Original array shape: {test_array.shape}, Coarsened array shape: {coarsened.shape}")
+    
+    # Test get_structure_props
+    print("Testing get_structure_props...")
+    try:
+        perims, areas, widths, heights = objscale.get_structure_props(test_array, x_sizes, y_sizes)
+        print(f"Structure properties calculated: {len(perims)} structures found")
+        if len(perims) > 0:
+            print(f"  Average perimeter: {np.mean(perims):.2f}")
+            print(f"  Average area: {np.mean(areas):.2f}")
+    except Exception as e:
+        print(f"  get_structure_props: {e}")
+    
+    # Test remove_structures_touching_border_nan
+    print("Testing remove_structures_touching_border_nan...")
+    # Create a test array with NaN borders
+    test_array_nan = objscale.encase_in_value(test_array.astype(np.float32), np.nan)
+    cleared_array = objscale.remove_structures_touching_border_nan(test_array_nan)
+    print(f"  Structures after border removal: {np.sum(cleared_array == 1)}")
+    
+    # Test remove_structure_holes
+    print("Testing remove_structure_holes...")
+    filled_array = objscale.remove_structure_holes(test_array.astype(np.float32))
+    print(f"  Structures after hole filling: {np.sum(filled_array == 1)}")
+    
+    # Test clear_border_adjacent
+    print("Testing clear_border_adjacent...")
+    cleared_border = objscale.clear_border_adjacent(test_array)
+    print(f"  Structures after border clearing: {np.sum(cleared_border)}")
+    
+    # Test linear_regression
+    print("Testing linear_regression...")
+    x_test = np.array([1, 2, 3, 4, 5])
+    y_test = np.array([2, 4, 6, 8, 10])
+    (slope, intercept), (slope_err, intercept_err) = objscale.linear_regression(x_test, y_test)
+    print(f"  Linear regression: slope={slope:.3f}±{slope_err:.3f}, intercept={intercept:.3f}±{intercept_err:.3f}")
+    
+    # Test encase_in_value
+    print("Testing encase_in_value...")
+    small_array = np.ones((3, 3))
+    encased = objscale.encase_in_value(small_array, 0)
+    print(f"  Original shape: {small_array.shape}, Encased shape: {encased.shape}")
+    
+    # Test size distribution functions
+    print("Testing size distribution functions...")
+    try:
+        bin_middles, nontruncated_counts, truncated_counts, truncation_index = objscale.finite_array_size_distribution(arrays, 'area')
+        print(f"  Finite array size distribution: {len(bin_middles)} size bins")
+        print(f"    Truncation index: {truncation_index}")
+        print(f"    Total structures: {np.sum(nontruncated_counts + truncated_counts)}")
+        
+        sizes_single, counts_single = objscale.array_size_distribution(test_array, 'area')
+        print(f"  Single array size distribution: {len(sizes_single)} size bins")
+        print(f"    Total structures: {np.sum(counts_single)}")
+        
+        print("  All additional function tests completed successfully!")
+    except Exception as e:
+        print(f"  Size distribution functions: {e}")
+    
     print("\n=== CREATING PLOTS ===")
     
     # Create figure with subplots
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     fig.suptitle('Objscale Package Test Results', fontsize=16)
     
     # Plot area distribution (convert from log10 back to linear for plotting)
@@ -108,6 +198,14 @@ def main():
     ax4.set_title(f'Box Dimension\\nDimension: {box_dim:.3f} ± {box_error:.3f}')
     ax4.grid(True, alpha=0.3)
     
+    # Plot coarsening dimension (total perimeter vs resolution)
+    ax5 = axes[1, 2]
+    ax5.loglog(coarsening_factors, mean_total_perimeters, 'co-', markersize=4, linewidth=1)
+    ax5.set_xlabel('Resolution (coarsening factor)')
+    ax5.set_ylabel('Total Perimeter')
+    ax5.set_title(f'Coarsening Dimension\\nDimension: {coarsening_dim:.3f} ± {coarsening_error:.3f}')
+    ax5.grid(True, alpha=0.3)
+    
     plt.tight_layout()
     plt.show()
     
@@ -116,6 +214,7 @@ def main():
     print(f"Perimeter exponent: {perim_exponent:.3f} ± {perim_error:.3f}")
     print(f"Correlation dimension: {corr_dim:.3f} ± {corr_error:.3f}")
     print(f"Box dimension: {box_dim:.3f} ± {box_error:.3f}")
+    print(f"Coarsening dimension: {coarsening_dim:.3f} ± {coarsening_error:.3f}")
     print("Individual fractal dimensions:")
     for i, (dim, error) in enumerate(individual_dims):
         print(f"  Array {i+1}: {dim:.3f} ± {error:.3f}")

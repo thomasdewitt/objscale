@@ -8,13 +8,13 @@ from ._object_analysis import remove_structures_touching_border_nan, remove_stru
 from ._utils import linear_regression, encase_in_value
 
 
-def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ninth=True, return_C_l=False, bins=None, point_reduction_factor=1):
+def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ninth=True, return_C_l=False, bins=None, point_reduction_factor=1, nbins=50):
     """
-        Given a binary array, calculate the correlation dimension D where C_l\propto l^D
+        Given a list of binary arrays, calculate the correlation dimension D where C_l\propto l^D
 
         Input:
-            array: 
-                binary array to calculate correlation dimension of
+            arrays: 
+                list of binary arrays to calculate correlation dimension of
             x_sizes, y_sizes: 
                 pixel sizes in the x and y directions.
                     If None, assume all pixel dimensions are 1. 
@@ -27,13 +27,17 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ni
                     return dimension, error, bins, C_l
                     else, return dimension, error
             bins:
-                Values of l to use for the regression
-                    if None, automatically calculate as 
-                    logarithmically spaced intervals between
-                    3*minimum length and the array width or height
+                Values of l to use for the regression. Can be:
+                    - None: automatically calculate as logarithmically spaced intervals between
+                      3*minimum length and the array width or height using nbins points
+                    - int: number of logarithmically spaced bins to generate automatically
+                    - array-like: explicit bin edges to use
             point_reduction_factor: float, >= 1
                 Draw N/point_reduction_factor circles, where N is the total number of available circles.
                 Choose the circle centers randomly. 
+            nbins: int, default=50
+                Number of bins to use when bins=None or when bins is an int. Only used for 
+                automatic bin generation.
 
         Output:
             if return_C_l:
@@ -41,7 +45,6 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ni
             else:
                 return dimension, error
     """
-    nbins = 50
 
     if type(arrays) == np.ndarray: arrays = [arrays]
 
@@ -52,13 +55,21 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ni
     h = x_sizes.shape[0]
     w = x_sizes.shape[1]
 
-    if middle_ninth:    # min(width, height) of middle 9th, where width, height are calculated in the center
-        maxlength = np.sqrt((locations_x[int(h/2), int(w/3)]-locations_x[int(h/2), int(2*w/3)])**2 + (locations_y[int(h/3), int(w/2)]-locations_y[int(2*h/3), int(w/2)])**2)
+    if middle_ninth: 
+        # For the most conservative estimate, the maximum radius should be 
+        # the minimum distance from the middle ninth boundary to the array edge
+        # This should be 1/3 of the array shape
+        # This ensures no circle extends outside the domain
+        # Note this assumes rectangular domain
+        maxlength = min(h/3, w/3)
     else:   # min(width, height) of entire array, where width, height are calculated in the center
         maxlength = np.sqrt((locations_x[int(h/2), 0]-locations_x[int(h/2), w-1])**2 + (locations_y[0, int(w/2)]-locations_y[h-1, int(w/2)])**2)
 
     minlength = 3*min(np.nanmin(x_sizes), np.nanmin(y_sizes))
-    if bins is None: bins = np.geomspace(minlength, maxlength, nbins)
+    if bins is None: 
+        bins = np.geomspace(minlength, maxlength, nbins)
+    elif isinstance(bins, int):
+        bins = np.geomspace(minlength, maxlength, bins)
 
     C_l = np.zeros(bins.shape)
 
@@ -78,7 +89,7 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ni
             circle_centers = all_boundary_coordinates
 
         if point_reduction_factor>1:
-            circle_centers = circle_centers[np.random.choice(np.arange(len(circle_centers)), int(len(circle_centers)/point_reduction_factor), replace=True)]
+            circle_centers = circle_centers[np.random.choice(np.arange(len(circle_centers)), int(len(circle_centers)/point_reduction_factor), replace=False)]
         elif point_reduction_factor<1: raise ValueError('point_reduction_factor must be >= 1')
 
         C_l += correlation_integral(circle_centers, all_boundary_coordinates, locations_x, locations_y, bins)
@@ -140,7 +151,7 @@ def ensemble_box_dimension(binary_arrays, set = 'edge', min_pixels=1, min_box_si
     Raises:
     -------
     ValueError
-        If an unsupported value is provided for 'set' or 'upscale_factors'.
+        If an unsupported value is provided for 'set' or 'coarsening_factors'.
         If an array contains nan values
 
     Notes:
@@ -154,13 +165,13 @@ def ensemble_box_dimension(binary_arrays, set = 'edge', min_pixels=1, min_box_si
     if type(binary_arrays) == np.ndarray: binary_arrays = [binary_arrays]
 
     if type(box_sizes) == str:    # to not try elementwise comparison
-        if box_sizes != 'default': raise ValueError(f'upscale_factors={box_sizes} not supported')
+        if box_sizes != 'default': raise ValueError(f'coarsening_factors={box_sizes} not supported')
         
         box_sizes = 2**np.arange(1,15)    # assumed any array is smaller than 32768 pixels
     else: box_sizes = np.array(box_sizes)
     
-    max_upscale_factor = min(binary_arrays[0].shape)/min_pixels
-    box_sizes = box_sizes[box_sizes<=max_upscale_factor]
+    max_coarsening_factor = min(binary_arrays[0].shape)/min_pixels
+    box_sizes = box_sizes[box_sizes<=max_coarsening_factor]
     box_sizes = box_sizes[box_sizes>=min_box_size]
 
     mean_number_boxes = np.empty((0,box_sizes.size), dtype=np.float32)
@@ -170,14 +181,14 @@ def ensemble_box_dimension(binary_arrays, set = 'edge', min_pixels=1, min_box_si
         if np.count_nonzero(np.isnan(array))>0: raise ValueError('array has nan values')
         for factor in box_sizes:
 
-            # Upscale
-            upscaled_array = encase_in_value(coarsen_array(array, factor), np.nan)
+            # Coarsen
+            coarsened_array = encase_in_value(coarsen_array(array, factor), np.nan)
             
             # Count boxes
             if set == 'edge':
-                nboxes = np.count_nonzero((upscaled_array>0) & (upscaled_array<1))
+                nboxes = np.count_nonzero((coarsened_array>0) & (coarsened_array<1))
             elif set == 'ones':
-                nboxes = np.count_nonzero(upscaled_array>0)
+                nboxes = np.count_nonzero(coarsened_array>0)
             else: raise ValueError(f'set={set} not supported (supported values are "edge" or "ones")')
 
             number_boxes.append(nboxes)
@@ -193,41 +204,41 @@ def ensemble_box_dimension(binary_arrays, set = 'edge', min_pixels=1, min_box_si
     return -slope, error
 
 
-def ensemble_coarsening_dimension(arrays, x_sizes=None, y_sizes=None, cloudy_threshold=0.5, min_pixels=30, return_values=False, upscale_factors = 'default', count_exterior=False):
+def ensemble_coarsening_dimension(arrays, x_sizes=None, y_sizes=None, cloudy_threshold=0.5, min_pixels=30, return_values=False, coarsening_factors = 'default', count_exterior=False):
     """
         Given a list of 2-D arrays, calculate the ensemble fractal dimension by 
         coarsening the resolution and calculating the total perimeter as a function of resolution.
 
         Input:
-            arrays: array, or list of arrays, to upscale, apply cloudy_thresh to make binary, then calculate total perimeter
-            min_pixels: limit the upscale factors such that upscaled matrices always have shape >= (min_pixels, min_pixels)
-            return_values: if True, return (D_e, error), (upscale_factors, mean_total_perimeters)
+            arrays: array, or list of arrays, to coarsen, apply cloudy_thresh to make binary, then calculate total perimeter
+            min_pixels: limit the coarsening factors such that coarsened matrices always have shape >= (min_pixels, min_pixels)
+            return_values: if True, return (D_e, error), (coarsening_factors, mean_total_perimeters)
             x_sizes, y_sizes: Pixel sizes in the x and y directions. 
                 If None, assume all pixel dimensions are 1. 
                 If np.ndarray, use these for each array in 'arrays'
                 If list, assume x_sizes[i] corresponds to arrays[i], etc, for all i
         return: 
             D_e, error (95% conf)
-            if return_values: D_e, error, upscale_factors, mean_total_perimeters
+            if return_values: D_e, error, coarsening_factors, mean_total_perimeters
     """
     if type(arrays) == np.ndarray: arrays = [arrays]
-    if x_sizes is None: x_sizes = np.ones(arrays[0].shape, dtype=bool)
-    if y_sizes is None: y_sizes = np.ones(arrays[0].shape, dtype=bool)
+    if x_sizes is None: x_sizes = np.ones(arrays[0].shape, dtype=np.float32)
+    if y_sizes is None: y_sizes = np.ones(arrays[0].shape, dtype=np.float32)
 
-    if type(upscale_factors) == str:    # to not try elementwise comparison
-        if upscale_factors != 'default': raise ValueError(f'upscale_factors={upscale_factors} not supported')
+    if type(coarsening_factors) == str:    # to not try elementwise comparison
+        if coarsening_factors != 'default': raise ValueError(f'coarsening_factors={coarsening_factors} not supported')
         if np.count_nonzero((arrays[0]<1) & (arrays[0]>0))==0:
-            # If a binary array, even upscale factors can be ambiguous because sometimes the superpixel is half cloudy. In this case, use the following
-            upscale_factors = 3**np.arange(0,10)
+            # If a binary array, even coarsening factors can be ambiguous because sometimes the superpixel is half cloudy. In this case, use the following
+            coarsening_factors = 3**np.arange(0,10)
         else:
-            # Otherwise, use more upscale factors:
-            upscale_factors = 2**np.arange(0,15)
-    else: upscale_factors = np.array(upscale_factors)
+            # Otherwise, use more coarsening factors:
+            coarsening_factors = 2**np.arange(0,15)
+    else: coarsening_factors = np.array(coarsening_factors)
     
-    max_upscale_factor = min(arrays[0].shape)/min_pixels
-    upscale_factors = upscale_factors[upscale_factors<=max_upscale_factor]
+    max_coarsening_factor = min(arrays[0].shape)/min_pixels
+    coarsening_factors = coarsening_factors[coarsening_factors<=max_coarsening_factor]
 
-    mean_total_perimeters = np.empty((0,upscale_factors.size), dtype=np.float32)
+    mean_total_perimeters = np.empty((0,coarsening_factors.size), dtype=np.float32)
     
     for i in range(len(arrays)):
         array = arrays[i]
@@ -241,31 +252,31 @@ def ensemble_coarsening_dimension(arrays, x_sizes=None, y_sizes=None, cloudy_thr
             ys = y_sizes
 
         total_perimeters = []
-        for factor in upscale_factors:
+        for factor in coarsening_factors:
 
-            # Upscale
-            upscaled_array = encase_in_value(coarsen_array(array, factor), np.nan)
-            upscaled_x_sizes = factor*encase_in_value(coarsen_array(xs, factor), 0)    # the value appended here is irrelevant since the array is 0 here, just to make the shape the same
-            upscaled_y_sizes = factor*encase_in_value(coarsen_array(ys, factor), 0)    # the value appended here is irrelevant since the array is 0 here, just to make the shape the same
+            # Coarsen
+            coarsened_array = encase_in_value(coarsen_array(array, factor), np.nan)
+            coarsened_x_sizes = factor*encase_in_value(coarsen_array(xs, factor), 0)    # the value appended here is irrelevant since the array is 0 here, just to make the shape the same
+            coarsened_y_sizes = factor*encase_in_value(coarsen_array(ys, factor), 0)    # the value appended here is irrelevant since the array is 0 here, just to make the shape the same
 
-            nanmask = (np.isnan(upscaled_array) | np.isnan(upscaled_x_sizes) | np.isnan(upscaled_y_sizes))
+            nanmask = (np.isnan(coarsened_array) | np.isnan(coarsened_x_sizes) | np.isnan(coarsened_y_sizes))
             # Make binary
-            upscaled_array_binary = (upscaled_array>cloudy_threshold).astype(np.float32)
+            coarsened_array_binary = (coarsened_array>cloudy_threshold).astype(np.float32)
 
             # To not count exterior perimeter, set to nan, to count it, set to 0
             if count_exterior: padding = 0
             else: padding = np.nan
-            upscaled_array_binary[nanmask] = padding
+            coarsened_array_binary[nanmask] = padding
 
-            total_p = total_perimeter(upscaled_array_binary, upscaled_x_sizes, upscaled_y_sizes)
+            total_p = total_perimeter(coarsened_array_binary, coarsened_x_sizes, coarsened_y_sizes)
             total_perimeters.append(total_p)
         mean_total_perimeters = np.append(mean_total_perimeters, [total_perimeters], axis=0)
 
     mean_total_perimeters = np.mean(mean_total_perimeters, axis=0)
     mean_total_perimeters[mean_total_perimeters==0] = np.nan # eliminate warning when logging 0
 
-    (slope, _), (error,_) = linear_regression(np.log10(upscale_factors), np.log10(mean_total_perimeters))
-    if return_values: return 1-slope, error, upscale_factors, mean_total_perimeters
+    (slope, _), (error,_) = linear_regression(np.log10(coarsening_factors), np.log10(mean_total_perimeters))
+    if return_values: return 1-slope, error, coarsening_factors, mean_total_perimeters
 
     return 1-slope, error
 
@@ -421,19 +432,18 @@ def coarsen_array(array, factor):
     Coarsen a given array by a specified factor by averaging along both dimensions.
 
     This function takes an input array and reduces it by a given factor along both the x and y dimensions. The
-    upscaling is achieved by summing 'superpixel' regions of the original array and dividing by the square of the
-    scaling factor. Optionally, the resulting upscaled array can be thresholded to create a binary array, where
-    values above 0.5 are set to 1 and values below or equal to 0.5 are set to 0.
+    coarsening is achieved by summing 'superpixel' regions of the original array and dividing by the number of
+    pixels in each region. The resulting coarsened array has reduced resolution.
 
     Args:
-        array (numpy.ndarray): The input array to be upscaled.
-        factor (int): The scaling factor for enlarging the array. Must be a positive integer.
+        array (numpy.ndarray): The input array to be coarsened.
+        factor (int): The coarsening factor for reducing the array resolution. Must be a positive integer.
 
     Returns:
-        numpy.ndarray: The upscaled array.
+        numpy.ndarray: The coarsened array with reduced resolution.
 
     Raises:
-        ValueError: If an even scaling factor is provided while attempting to create a binary array, as this may lead
+        ValueError: If an even coarsening factor is provided while attempting to create a binary array, as this may lead
             to rounding issues.
 
     Example:
@@ -445,16 +455,16 @@ def coarsen_array(array, factor):
 
     """
 
-    upscaled_array = np.add.reduceat(array, np.arange(array.shape[0], step=factor), axis=0)     # add points in x direction
-    upscaled_array = np.add.reduceat(upscaled_array, np.arange(array.shape[1], step=factor), axis=1)     # add points in y direction
+    coarsened_array = np.add.reduceat(array, np.arange(array.shape[0], step=factor), axis=0)     # add points in x direction
+    coarsened_array = np.add.reduceat(coarsened_array, np.arange(array.shape[1], step=factor), axis=1)     # add points in y direction
 
-    # The number of pixels that are upscaled is usually factor**2, but not for edge superpixels if the factor does not evenly divide into array size. Solution:
+    # The number of pixels that are coarsened is usually factor**2, but not for edge superpixels if the factor does not evenly divide into array size. Solution:
     pixel_counts = np.add.reduceat(np.ones(array.shape), np.arange(array.shape[0], step=factor), axis=0)     # add points in x direction
     pixel_counts = np.add.reduceat(pixel_counts, np.arange(array.shape[1], step=factor), axis=1)     # add points in y direction
 
-    upscaled_array = upscaled_array/pixel_counts
+    coarsened_array = coarsened_array/pixel_counts
 
-    return upscaled_array
+    return coarsened_array
 
 
 @njit()
@@ -481,7 +491,7 @@ def total_perimeter(array, x_sizes, y_sizes):
             elif j == array.shape[1]-1 and array[i, 0] == 0: perimeter += y_sizes[i,j]
 
             if j != 0 and array[i, j-1] == 0: perimeter += y_sizes[i,j]
-            elif j == 0 and array[i, 0] == 0: perimeter += y_sizes[i,j]
+            elif j == 0 and array[i, array.shape[1]-1] == 0: perimeter += y_sizes[i,j]
 
     return perimeter
 

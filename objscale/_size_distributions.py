@@ -60,8 +60,8 @@ def finite_array_size_distribution(arrays, variable, x_sizes=None, y_sizes=None,
 
     """
     if type(arrays) == np.ndarray: arrays = [arrays]
-    if x_sizes is None: x_sizes = np.ones(arrays[0].shape, dtype=bool)
-    if y_sizes is None: y_sizes = np.ones(arrays[0].shape, dtype=bool)
+    if x_sizes is None: x_sizes = np.ones(arrays[0].shape, dtype=np.float32)
+    if y_sizes is None: y_sizes = np.ones(arrays[0].shape, dtype=np.float32)
 
 
     if type(bins) == int: 
@@ -204,7 +204,7 @@ def array_size_distribution(array, variable='area', bins=30, bin_logs=True, stru
             - structure: 3x3 2-D np.ndarray: defines object connectivity
             - wrap:  None, 'sides, 'all: 
                 if 'sides', connect structures that span the left/right edge
-                if 'all', connect structures that span the left/right edge and top/bottom edge
+                if 'both', connect structures that span the left/right edge and top/bottom edge
             - x_sizes, y_sizes: 2-D np.ndarray of shape array.shape: lengths of pixels of array. If None, assume all lengths are 1
         Output:
             - bin_middles, counts: 1-D np.ndarrays of len(bins). If bin_logs, bin_middles will be log10(bin value)
@@ -224,8 +224,8 @@ def array_size_distribution(array, variable='area', bins=30, bin_logs=True, stru
                 'length' or 'width': Overall distance between the farthest two points in a structure in
                                     the x- or y- direction.
     """
-    if x_sizes is None: x_sizes = np.ones(array.shape, dtype=bool)
-    if y_sizes is None: y_sizes = np.ones(array.shape, dtype=bool)
+    if x_sizes is None: x_sizes = np.ones(array.shape, dtype=np.float32)
+    if y_sizes is None: y_sizes = np.ones(array.shape, dtype=np.float32)
     if variable in ['area','perimeter','height','width']:
         p, a, h, w = get_structure_props(array, x_sizes, y_sizes, structure, wrap=wrap)
         if variable == 'area': to_bin = a

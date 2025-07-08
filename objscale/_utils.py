@@ -15,7 +15,8 @@ def linear_regression(x, y):
         coefficients, cov = np.polyfit(x[index], y[index], 1, cov=True)
         error = np.sqrt(np.diag(cov))
     except Exception as e:
-        warn('Linear regression failed, error message\n','     ',e)
+        warn(f'Linear regression failed: {e!s}'
+)
         return (np.nan, np.nan),(np.nan, np.nan)
     return coefficients, 2*error  # 95% conf interval is 2 times standard error 
 

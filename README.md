@@ -77,6 +77,35 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 - scikit-image ≥ 0.18.0
 - Numba ≥ 0.56.0
 
+## Available Functions
+
+### Fractal Dimensions
+- `individual_fractal_dimension` - Fractal dimension of individual objects
+- `ensemble_correlation_dimension` - Correlation dimension for object ensembles
+- `ensemble_box_dimension` - Box-counting dimension for object ensembles
+- `ensemble_coarsening_dimension` - Coarsening-based fractal dimension
+
+### Size Distributions
+- `finite_array_powerlaw_exponent` - Power-law exponents with finite domain corrections
+- `finite_array_size_distribution` - Size distributions with truncation analysis
+- `array_size_distribution` - Basic size distribution for single arrays
+
+### Object Analysis
+- `get_structure_props` - Calculate perimeter, area, width, height of structures
+- `total_perimeter` - Total perimeter of all objects
+- `total_number` - Count number of structures
+- `isolate_largest_structure` - Extract the largest connected structure
+- `remove_structures_touching_border_nan` - Remove border-touching structures
+- `remove_structure_holes` - Fill holes in structures
+- `clear_border_adjacent` - Clear structures touching array edges
+
+### Utilities
+- `coarsen_array` - Coarsen array resolution by averaging
+- `linear_regression` - Linear regression with error estimates
+- `encase_in_value` - Add border of specified value around array
+
+**Documentation**: Detailed parameter descriptions and usage examples are provided in each function's docstring. Use `help(objscale.function_name)` or `objscale.function_name?` in IPython/Jupyter for full documentation.
+
 ## Support Statement
 
 This package consolidates research code developed over several years. While functional and tested, it should be considered research software with limited ongoing support. Users are encouraged to understand the underlying methods through the referenced papers before applying to their data.
@@ -91,8 +120,12 @@ https://doi.org/10.5194/acp-24-8457-2024, 2024.
 
 ## Author
 
-Thomas D. DeWitt  
+Thomas D. DeWitt
 University of Utah Department of Atmospheric Sciences
+
+
+Sonnet 4 with Claude Code
+Anthropic
 
 ## License
 
