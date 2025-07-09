@@ -39,6 +39,12 @@ Novel fractal dimension based on how total object perimeter changes under spatia
 pip install objscale
 ```
 
+## Documentation
+
+📖 **[Full Documentation](https://objscale.readthedocs.io)**
+
+Complete API reference, detailed examples, and usage guides are available at [objscale.readthedocs.io](https://objscale.readthedocs.io).
+
 ## Quick Example
 
 ```python
@@ -104,7 +110,7 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 - `linear_regression` - Linear regression with error estimates
 - `encase_in_value` - Add border of specified value around array
 
-**Documentation**: Detailed parameter descriptions and usage examples are provided in each function's docstring. Use `help(objscale.function_name)` or `objscale.function_name?` in IPython/Jupyter for full documentation.
+For detailed parameter descriptions and usage examples, see the [full documentation](https://objscale.readthedocs.io) or use `help(objscale.function_name)` or `objscale.function_name?` in IPython/Jupyter.
 
 ## Support Statement
 
