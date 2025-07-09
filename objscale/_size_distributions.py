@@ -14,50 +14,67 @@ from ._utils import linear_regression, encase_in_value
 
 def finite_array_size_distribution(arrays, variable, x_sizes=None, y_sizes=None, bins=100, bin_logs=True, min_threshold=10, truncation_threshold=0.5):
     """
-        Calculate the size distributions for structures within a 
-        list of binary arrays, where 'size' is perimeter, area, length, or width.
-        Returns the size distributions for truncated objects and nontruncated objects
-        and the index where truncated object begin to dominate.
-        
-        Works for binary arrays and also for binary arrays where the data boundary is 
-        demarcated by nans. This enables the domain boundary to be an arbitrary shape, 
-        rather than be rectangular (as is the case for a binary array).
-        
-        Input:
-            - arrays: 2-D np.ndarray or list of 2-D np.ndarray, where objects of interest have value 1, 
-                        the background has value 0, and no data has np.nan. 
-                        Interior nans are treated like 0's, except the perimeter along them is not counted.
-            - variable: 'area','perimeter','nested perimeter,'height','width': which object attribute to bin by. See below for definitions.
-            - x_sizes, y_sizes: 
-                pixel sizes in the x and y directions.
-                    If None, assume all pixel dimensions are 1. 
-                    If np.ndarray, use these for each array in 'arrays'
-                    If list, assume x_sizes[i] corresponds to arrays[i], etc, for all i
-            - bins: int or 1-D array:
-                        if int, auto calculate bin locations, make that number of bins
-                        if 1-D array: use these as bin edges or log10(bin edges). They must be uniformly 
-                        linearly or logarithmically spaced (depending on bin_logs)
-            - bin_logs: T/F: if True, bin log10(variable) into logarithmically-spaced bins. If False, bin
-                        variable into linearly spaced bins (if bins are explicitely passed, use these in any case)
-            - min_threshold: smallest bin edge. If bin edges are passed, this arg is ignored.
-            - truncation_threshold: float between 0 and 1. Bins with a larger fraction of truncated objects than this are omitted from the regression
-        Output:
-            - bin_middles, nontruncated_counts, truncated_counts, truncation_index
-                Note: if bin_logs is True, bin middles is actually log10(bin_middles)
+    Calculate size distributions for structures within binary arrays.
+    
+    Returns the size distributions for truncated objects and nontruncated objects
+    and the index where truncated objects begin to dominate. Works for binary arrays 
+    and also for binary arrays where the data boundary is demarcated by nans, enabling 
+    the domain boundary to be an arbitrary shape.
 
-        Notes:
+    Parameters
+    ----------
+    arrays : np.ndarray or list of np.ndarray
+        2-D arrays where objects of interest have value 1, background has value 0, 
+        and no data has np.nan. Interior nans are treated like 0's, except the 
+        perimeter along them is not counted.
+    variable : str
+        Object attribute to bin by. Options: 'area', 'perimeter', 'nested perimeter', 
+        'height', 'width'. See Notes for definitions.
+    x_sizes : np.ndarray or list, optional
+        Pixel sizes in the x direction. If None, assume all pixel dimensions are 1.
+        If np.ndarray, use these for each array in 'arrays'. If list, assume
+        x_sizes[i] corresponds to arrays[i].
+    y_sizes : np.ndarray or list, optional
+        Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
+        If np.ndarray, use these for each array in 'arrays'. If list, assume
+        y_sizes[i] corresponds to arrays[i].
+    bins : int or array-like, default=100
+        If int, auto calculate bin locations and make that number of bins.
+        If 1-D array: use these as bin edges or log10(bin edges). They must be uniformly 
+        linearly or logarithmically spaced (depending on bin_logs).
+    bin_logs : bool, default=True
+        If True, bin log10(variable) into logarithmically-spaced bins. If False, bin
+        variable into linearly spaced bins.
+    min_threshold : float, default=10
+        Smallest bin edge. If bin edges are passed, this arg is ignored.
+    truncation_threshold : float, default=0.5
+        Float between 0 and 1. Bins with a larger fraction of truncated objects than 
+        this are omitted from the regression.
 
-        'variable' definitions: 
-            'perimeter': Sum of pixel edge lengths between all pixels within a structure and 
-                        neighboring values of 0. Does not include perimeter adjacent to a nan.
-                        A donut shaped structure returns a single value.
-            'nested perimeter': Sum of pixel edge lengths between all pixels that are between a structure
-                        and a neighboring region of 0s. Does not include perimeter adjacent to a nan.
-                        A donut shaped structure returns two values: one for the inner circle and one for the outer.
-            'area': Sum of individual pixel areas constituting the structure
-            'length' or 'width': Overall distance between the farthest two points in a structure in
-                                the x- or y- direction.
+    Returns
+    -------
+    bin_middles : np.ndarray
+        Bin middle values. If bin_logs is True, this is actually log10(bin_middles).
+    nontruncated_counts : np.ndarray
+        Counts of non-truncated objects in each bin.
+    truncated_counts : np.ndarray
+        Counts of truncated objects in each bin.
+    truncation_index : int
+        Index where truncated objects begin to dominate.
 
+    Notes
+    -----
+    Variable definitions:
+    
+    - 'perimeter': Sum of pixel edge lengths between all pixels within a structure and 
+      neighboring values of 0. Does not include perimeter adjacent to a nan.
+      A donut shaped structure returns a single value.
+    - 'nested perimeter': Sum of pixel edge lengths between all pixels that are between a structure
+      and a neighboring region of 0s. Does not include perimeter adjacent to a nan.
+      A donut shaped structure returns two values: one for the inner circle and one for the outer.
+    - 'area': Sum of individual pixel areas constituting the structure.
+    - 'length' or 'width': Overall distance between the farthest two points in a structure in
+      the x- or y- direction.
     """
     if type(arrays) == np.ndarray: arrays = [arrays]
     if x_sizes is None: x_sizes = np.ones(arrays[0].shape, dtype=np.float32)

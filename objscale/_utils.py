@@ -4,7 +4,26 @@ from warnings import warn
 
 def linear_regression(x, y):
     """
-        Return (slope, y-int), (error_slope, error_y_int) for 95% conf
+    Perform linear regression and return coefficients with 95% confidence errors.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Independent variable values.
+    y : np.ndarray
+        Dependent variable values.
+
+    Returns
+    -------
+    coefficients : tuple of float
+        (slope, y-intercept) from linear regression.
+    errors : tuple of float
+        (error_slope, error_y_intercept) for 95% confidence.
+
+    Raises
+    ------
+    TypeError
+        If x or y are not numpy arrays.
     """
     if type(x) != np.ndarray or type(y) != np.ndarray: raise TypeError('x, y, must be of type np.ndarray')
     index = np.isfinite(x) & np.isfinite(y)
@@ -23,12 +42,23 @@ def linear_regression(x, y):
 
 def encase_in_value(array, value=np.nan, dtype=np.float32, n_deep=1):
     """
-        Input:
-            array: 2-D np.ndarray
-            value: value to append on the edge
-            dtype: dtype of the resulting array
-        Output:
-            array: Same as input but with a layer 'n_deep' of 'value' all around the edge: 2-D np.ndarray
+    Add a border of specified value around a 2-D array.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        2-D input array.
+    value : scalar, default=np.nan
+        Value to append on the edge.
+    dtype : np.dtype, default=np.float32
+        Data type of the resulting array.
+    n_deep : int, default=1
+        Number of layers deep to add around the edge.
+
+    Returns
+    -------
+    np.ndarray
+        Same as input but with a layer 'n_deep' of 'value' all around the edge.
     """
 
     nans_lr = np.empty((array.shape[0],n_deep), dtype=dtype)

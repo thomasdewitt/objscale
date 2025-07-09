@@ -9,22 +9,44 @@ from ._utils import encase_in_value
 
 def get_structure_props(array, x_sizes, y_sizes, structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]), print_none=False, wrap=None):
     """
-        Input:
-            array - Binary array of strc: 2-d np.ndarray, padded with 0's or np.nan's
-            x_sizes = Sizes of pixels in horizontal direction, same shape as array: 2-d np.ndarray
-            y_sizes = Sizes of pixels in vertical direction, same shape as array: 2-d np.ndarray
-            structure = Defines connectivity
-            print_none = Print message if no structures found
-            wrap = None, 'sides', 'both': 
-                if 'sides', connect structures that span the left/right edge
-                if 'both', connect structures that span the left/right edge and top/bottom edge
-        Output:
-            perimeter, area, height, width: 1-D np.ndarrays, each element the perimeter/area/height/width of an individual structure
+    Calculate properties of structures in a binary array.
 
-        Note: if x_sizes or y_sizes are not uniform, the width will be the sum of the average pixel widths of the pixels in the column and in the object.
-        Similarly, the height will be the sum of the average pixel heights of the pixels in the row and in the object.
-        Given a array and the sizes of each pixel in each direction, calculate properties of structures. 
-        Any perimeter between structure and nan is not counted. 
+    Given an array and the sizes of each pixel in each direction, calculate 
+    properties of structures. Any perimeter between structure and nan is not counted.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        Binary array of structures: 2-d array, padded with 0's or np.nan's.
+    x_sizes : np.ndarray
+        Sizes of pixels in horizontal direction, same shape as array.
+    y_sizes : np.ndarray
+        Sizes of pixels in vertical direction, same shape as array.
+    structure : np.ndarray, default=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+        Defines connectivity.
+    print_none : bool, default=False
+        Print message if no structures found.
+    wrap : str or None, default=None
+        Boundary wrapping options: None, 'sides', 'both'.
+        If 'sides', connect structures that span the left/right edge.
+        If 'both', connect structures that span the left/right edge and top/bottom edge.
+
+    Returns
+    -------
+    perimeter : np.ndarray
+        1-D array, each element the perimeter of an individual structure.
+    area : np.ndarray
+        1-D array, each element the area of an individual structure.
+    height : np.ndarray
+        1-D array, each element the height of an individual structure.
+    width : np.ndarray
+        1-D array, each element the width of an individual structure.
+
+    Notes
+    -----
+    If x_sizes or y_sizes are not uniform, the width will be the sum of the average 
+    pixel widths of the pixels in the column and in the object. Similarly, the height 
+    will be the sum of the average pixel heights of the pixels in the row and in the object.
     """
 
     if array.shape != x_sizes.shape or array.shape != y_sizes.shape: 

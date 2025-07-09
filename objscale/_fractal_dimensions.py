@@ -10,40 +10,48 @@ from ._utils import linear_regression, encase_in_value
 
 def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ninth=True, return_C_l=False, bins=None, point_reduction_factor=1, nbins=50):
     """
-        Given a list of binary arrays, calculate the correlation dimension D where C_l\propto l^D
+    Calculate the correlation dimension D where C_l ∝ l^D for binary arrays.
 
-        Input:
-            arrays: 
-                list of binary arrays to calculate correlation dimension of
-            x_sizes, y_sizes: 
-                pixel sizes in the x and y directions.
-                    If None, assume all pixel dimensions are 1. 
-                    If np.ndarray, use these for each array in 'arrays'
-                    If list, assume x_sizes[i] corresponds to arrays[i], etc, for all i
-            middle_ninth: 
-                For each pixel, only use distances between that pixel and pixels within the central 9th section of the array. This reduces boundary effects.
-            return_C_l: 
-                if True, 
-                    return dimension, error, bins, C_l
-                    else, return dimension, error
-            bins:
-                Values of l to use for the regression. Can be:
-                    - None: automatically calculate as logarithmically spaced intervals between
-                      3*minimum length and the array width or height using nbins points
-                    - int: number of logarithmically spaced bins to generate automatically
-                    - array-like: explicit bin edges to use
-            point_reduction_factor: float, >= 1
-                Draw N/point_reduction_factor circles, where N is the total number of available circles.
-                Choose the circle centers randomly. 
-            nbins: int, default=50
-                Number of bins to use when bins=None or when bins is an int. Only used for 
-                automatic bin generation.
+    Parameters
+    ----------
+    arrays : list or np.ndarray
+        List of binary arrays to calculate correlation dimension of.
+    x_sizes : np.ndarray or list, optional
+        Pixel sizes in the x direction. If None, assume all pixel dimensions are 1.
+        If np.ndarray, use these for each array in 'arrays'. If list, assume
+        x_sizes[i] corresponds to arrays[i].
+    y_sizes : np.ndarray or list, optional
+        Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
+        If np.ndarray, use these for each array in 'arrays'. If list, assume
+        y_sizes[i] corresponds to arrays[i].
+    middle_ninth : bool, default=True
+        For each pixel, only use distances between that pixel and pixels within
+        the central 9th section of the array. This reduces boundary effects.
+    return_C_l : bool, default=False
+        If True, return dimension, error, bins, C_l. Otherwise, return dimension, error.
+    bins : None, int, or array-like, optional
+        Values of l to use for the regression. Can be:
+        - None: automatically calculate as logarithmically spaced intervals between
+          3*minimum length and the array width or height using nbins points
+        - int: number of logarithmically spaced bins to generate automatically
+        - array-like: explicit bin edges to use
+    point_reduction_factor : float, default=1
+        Draw N/point_reduction_factor circles, where N is the total number of
+        available circles. Choose the circle centers randomly. Must be >= 1.
+    nbins : int, default=50
+        Number of bins to use when bins=None or when bins is an int. Only used
+        for automatic bin generation.
 
-        Output:
-            if return_C_l:
-                return dimension, error, bins, C_l
-            else:
-                return dimension, error
+    Returns
+    -------
+    dimension : float
+        The correlation dimension.
+    error : float
+        Error estimate for the dimension.
+    bins : np.ndarray, optional
+        The bins used for calculation. Only returned if return_C_l=True.
+    C_l : np.ndarray, optional
+        The correlation integral values. Only returned if return_C_l=True.
     """
 
     if type(arrays) == np.ndarray: arrays = [arrays]
@@ -206,20 +214,43 @@ def ensemble_box_dimension(binary_arrays, set = 'edge', min_pixels=1, min_box_si
 
 def ensemble_coarsening_dimension(arrays, x_sizes=None, y_sizes=None, cloudy_threshold=0.5, min_pixels=30, return_values=False, coarsening_factors = 'default', count_exterior=False):
     """
-        Given a list of 2-D arrays, calculate the ensemble fractal dimension by 
-        coarsening the resolution and calculating the total perimeter as a function of resolution.
+    Calculate the ensemble fractal dimension by coarsening resolution and calculating total perimeter.
 
-        Input:
-            arrays: array, or list of arrays, to coarsen, apply cloudy_thresh to make binary, then calculate total perimeter
-            min_pixels: limit the coarsening factors such that coarsened matrices always have shape >= (min_pixels, min_pixels)
-            return_values: if True, return (D_e, error), (coarsening_factors, mean_total_perimeters)
-            x_sizes, y_sizes: Pixel sizes in the x and y directions. 
-                If None, assume all pixel dimensions are 1. 
-                If np.ndarray, use these for each array in 'arrays'
-                If list, assume x_sizes[i] corresponds to arrays[i], etc, for all i
-        return: 
-            D_e, error (95% conf)
-            if return_values: D_e, error, coarsening_factors, mean_total_perimeters
+    Parameters
+    ----------
+    arrays : np.ndarray or list of np.ndarray
+        Array, or list of arrays, to coarsen, apply cloudy_threshold to make binary, 
+        then calculate total perimeter.
+    x_sizes : np.ndarray or list, optional
+        Pixel sizes in the x direction. If None, assume all pixel dimensions are 1.
+        If np.ndarray, use these for each array in 'arrays'. If list, assume
+        x_sizes[i] corresponds to arrays[i].
+    y_sizes : np.ndarray or list, optional
+        Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
+        If np.ndarray, use these for each array in 'arrays'. If list, assume
+        y_sizes[i] corresponds to arrays[i].
+    cloudy_threshold : float, default=0.5
+        Threshold for making arrays binary.
+    min_pixels : int, default=30
+        Limit the coarsening factors such that coarsened matrices always have 
+        shape >= (min_pixels, min_pixels).
+    return_values : bool, default=False
+        If True, return (D_e, error), (coarsening_factors, mean_total_perimeters).
+    coarsening_factors : str or array-like, default='default'
+        Coarsening factors to use. If 'default', automatically determined.
+    count_exterior : bool, default=False
+        Whether to count exterior perimeter.
+
+    Returns
+    -------
+    D_e : float
+        The ensemble fractal dimension.
+    error : float
+        Error estimate (95% confidence).
+    coarsening_factors : np.ndarray, optional
+        The coarsening factors used. Only returned if return_values=True.
+    mean_total_perimeters : np.ndarray, optional
+        Mean total perimeters. Only returned if return_values=True.
     """
     if type(arrays) == np.ndarray: arrays = [arrays]
     if x_sizes is None: x_sizes = np.ones(arrays[0].shape, dtype=np.float32)
@@ -283,24 +314,41 @@ def ensemble_coarsening_dimension(arrays, x_sizes=None, y_sizes=None, cloudy_thr
 
 def individual_fractal_dimension(arrays, x_sizes=None, y_sizes=None, min_a=10, max_a=np.inf, return_values=False):
     """
-        Calculate the individual fractal dimension Df of objects within arrays. 
+    Calculate the individual fractal dimension Df of objects within arrays.
 
-        The method is by a linear regression to log a vs. log p, where a and p 
-        are calculated not including structure holes, and omitting structures touching the array edge.
+    The method uses linear regression on log a vs. log p, where a and p are 
+    calculated not including structure holes, and omitting structures touching 
+    the array edge.
 
+    Parameters
+    ----------
+    arrays : list of np.ndarray
+        List of boolean 2D arrays.
+    x_sizes : np.ndarray or list, optional
+        Pixel sizes in the x direction. If None, assume all pixel dimensions are 1.
+        If np.ndarray, use these for each array in 'arrays'. If list, assume
+        x_sizes[i] corresponds to arrays[i].
+    y_sizes : np.ndarray or list, optional
+        Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
+        If np.ndarray, use these for each array in 'arrays'. If list, assume
+        y_sizes[i] corresponds to arrays[i].
+    min_a : float, default=10
+        Minimum structure area to include in calculation.
+    max_a : float, default=np.inf
+        Maximum structure area to include in calculation.
+    return_values : bool, default=False
+        If True, return (Df, err), (log10(sqrt(a)), log10(p)).
 
-        Input:
-            arrays: list of boolean 2D np.ndarrays
-            min_a, max_a: use structure areas within these bounds to calculate Df
-            return_values: if True, return (Df, err), (log10(sqrt(a)), log10(p))
-            x_sizes, y_sizes: Pixel sizes in the x and y directions. 
-                If None, assume all pixel dimensions are 1. 
-                If np.ndarray, use these for each array in 'arrays'
-                If list, assume x_sizes[i] corresponds to arrays[i], etc, for all i
-        Output:
-            Df, uncertainty (95% conf)
-            if return_values: Df, err, log10_sqrt(a), log10(p)
-
+    Returns
+    -------
+    Df : float
+        The individual fractal dimension.
+    uncertainty : float
+        Uncertainty estimate (95% confidence).
+    log10_sqrt_a : np.ndarray, optional
+        Log10 of sqrt(area) values. Only returned if return_values=True.
+    log10_p : np.ndarray, optional
+        Log10 of perimeter values. Only returned if return_values=True.
     """
     from ._object_analysis import get_structure_props
 
@@ -395,21 +443,34 @@ def get_locations_from_pixel_sizes(pixel_sizes_x, pixel_sizes_y):
 @njit(parallel=True)
 def correlation_integral(coordinates_to_check, coordinates_to_count, locations_x, locations_y, bins):
     """
-        Input:
-            coordinatess: np array of coordinates of boundaries of shape
-                            [[x1,y2],
-                             [x2,y2],
-                             [x3,y3],
-                             ...
-                             ]
-            locations_x, locations_y: locations of each pixel. 
-                For example, np.sqrt((locations_x[i,j]-locations_x[p,q])**2 + (locations_y[i,j]-locations_y[p,q])**2)
-                should represent the physical distance between pixel locations at i,j and p,q
-            bins: np 1-D array of distances to bin
-        Output:
-            of same shape as bins
-        For each coordinates_to_check:
-            Calculate how many coordinates_to_count are less than a distance bin_i of the chosen coord, for each bin_i in bin.
+    Calculate correlation integral for boundary coordinates.
+
+    For each coordinates_to_check, calculate how many coordinates_to_count are 
+    less than a distance bin_i of the chosen coordinate, for each bin_i in bins.
+
+    Parameters
+    ----------
+    coordinates_to_check : np.ndarray
+        Array of coordinates of boundaries of shape [[x1,y1], [x2,y2], [x3,y3], ...].
+    coordinates_to_count : np.ndarray
+        Array of coordinates to count within distance bins.
+    locations_x : np.ndarray
+        X locations of each pixel.
+    locations_y : np.ndarray
+        Y locations of each pixel.
+    bins : np.ndarray
+        1-D array of distances to bin.
+
+    Returns
+    -------
+    C_l : np.ndarray
+        Correlation integral values, same shape as bins.
+
+    Notes
+    -----
+    For example, np.sqrt((locations_x[i,j]-locations_x[p,q])**2 + 
+    (locations_y[i,j]-locations_y[p,q])**2) should represent the physical 
+    distance between pixel locations at i,j and p,q.
     """
     C_l = np.zeros(bins.shape)  # will be count
     
@@ -431,28 +492,35 @@ def coarsen_array(array, factor):
     """
     Coarsen a given array by a specified factor by averaging along both dimensions.
 
-    This function takes an input array and reduces it by a given factor along both the x and y dimensions. The
-    coarsening is achieved by summing 'superpixel' regions of the original array and dividing by the number of
-    pixels in each region. The resulting coarsened array has reduced resolution.
+    This function takes an input array and reduces it by a given factor along both 
+    the x and y dimensions. The coarsening is achieved by summing 'superpixel' regions 
+    of the original array and dividing by the number of pixels in each region. The 
+    resulting coarsened array has reduced resolution.
 
-    Args:
-        array (numpy.ndarray): The input array to be coarsened.
-        factor (int): The coarsening factor for reducing the array resolution. Must be a positive integer.
+    Parameters
+    ----------
+    array : np.ndarray
+        The input array to be coarsened.
+    factor : int
+        The coarsening factor for reducing the array resolution. Must be a positive integer.
 
-    Returns:
-        numpy.ndarray: The coarsened array with reduced resolution.
+    Returns
+    -------
+    np.ndarray
+        The coarsened array with reduced resolution.
 
-    Raises:
-        ValueError: If an even coarsening factor is provided while attempting to create a binary array, as this may lead
-            to rounding issues.
+    Raises
+    ------
+    ValueError
+        If an even coarsening factor is provided while attempting to create a binary 
+        array, as this may lead to rounding issues.
 
-    Example:
-        original_array = np.array([[1, 2],
-                                    [3, 4]])
-        coarsened = coarsen_array(original_array, factor=2)
-        # Resulting coarsened array:
-        # array([2.5])
-
+    Examples
+    --------
+    >>> original_array = np.array([[1, 2], [3, 4]])
+    >>> coarsened = coarsen_array(original_array, factor=2)
+    >>> coarsened
+    array([2.5])
     """
 
     coarsened_array = np.add.reduceat(array, np.arange(array.shape[0], step=factor), axis=0)     # add points in x direction
