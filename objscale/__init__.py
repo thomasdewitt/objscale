@@ -50,7 +50,7 @@ __all__ = [
     'encase_in_value',
 ]
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __author__ = "Thomas DeWitt"
 __email__ = "thomas.dewitt@utah.edu"
 __description__ = "Object-based analysis functions for fractal dimensions and size distributions"

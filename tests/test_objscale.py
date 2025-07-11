@@ -27,7 +27,7 @@ def main():
     
     # Create 4 percolation lattices
     arrays = []
-    for i in range(4):
+    for i in range(2):
         print(f"Creating array {i+1}/4...")
         array = create_percolation_lattice(size, P_C)
         arrays.append(array)
@@ -52,7 +52,7 @@ def main():
     # Calculate correlation dimension
     print("Calculating correlation dimension...")
     corr_dim, corr_error, corr_lengths, corr_integrals = objscale.ensemble_correlation_dimension(
-        arrays, return_C_l=True, point_reduction_factor=1000
+        arrays, return_C_l=True, point_reduction_factor=1000, maxlength='auto', interior_circles_only=False
     )
     print(f"Correlation dimension: {corr_dim:.3f} ± {corr_error:.3f}")
     

@@ -8,7 +8,7 @@ from ._object_analysis import remove_structures_touching_border_nan, remove_stru
 from ._utils import linear_regression, encase_in_value
 
 
-def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ninth=True, return_C_l=False, bins=None, point_reduction_factor=1, nbins=50):
+def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, minlength='auto', maxlength='auto', interior_circles_only=True, return_C_l=False, bins=None, point_reduction_factor=1, nbins=50):
     """
     Calculate the correlation dimension D where C_l ∝ l^D for binary arrays.
 
@@ -24,9 +24,16 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ni
         Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
         If np.ndarray, use these for each array in 'arrays'. If list, assume
         y_sizes[i] corresponds to arrays[i].
-    middle_ninth : bool, default=True
-        For each pixel, only use distances between that pixel and pixels within
-        the central 9th section of the array. This reduces boundary effects.
+    minlength : str or float, default='auto'
+        Minimum length scale for correlation calculation. If 'auto', uses 3 times
+        the minimum pixel size.
+    maxlength : str or float, default='auto'
+        Maximum length scale for correlation calculation. If 'auto', uses 0.1 times
+        the minimum array dimension.
+    interior_circles_only : bool, default=True
+        If True, only use circle centers that are at least maxlength distance from
+        all array edges to avoid boundary effects. In other words, only use circles
+        that are fully contained within the array. Recommended!
     return_C_l : bool, default=False
         If True, return dimension, error, bins, C_l. Otherwise, return dimension, error.
     bins : None, int, or array-like, optional
@@ -63,21 +70,33 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ni
     h = x_sizes.shape[0]
     w = x_sizes.shape[1]
 
-    if middle_ninth: 
-        # For the most conservative estimate, the maximum radius should be 
-        # the minimum distance from the middle ninth boundary to the array edge
-        # This should be 1/3 of the array shape
-        # This ensures no circle extends outside the domain
-        # Note this assumes rectangular domain
-        maxlength = min(h/3, w/3)
-    else:   # min(width, height) of entire array, where width, height are calculated in the center
-        maxlength = np.sqrt((locations_x[int(h/2), 0]-locations_x[int(h/2), w-1])**2 + (locations_y[0, int(w/2)]-locations_y[h-1, int(w/2)])**2)
+    if maxlength == 'auto': 
+          # One tenth of min(width, height) of entire array, where width, height are calculated in the center
+        maxlength =  0.1 * min((locations_x[int(h/2), w-1]-locations_x[int(h/2), 0]), (locations_y[h-1, int(w/2)]-locations_y[0, int(w/2)]))
 
-    minlength = 3*min(np.nanmin(x_sizes), np.nanmin(y_sizes))
+    if minlength == 'auto': minlength = 3*min(np.nanmin(x_sizes), np.nanmin(y_sizes))
+
+    # Basic validation checks
+    if np.any(np.isnan(x_sizes)) or np.any(np.isnan(y_sizes)):
+        raise ValueError("x_sizes and y_sizes cannot contain NaN values")
+
+    if np.any(x_sizes <= 0) or np.any(y_sizes <= 0):
+        raise ValueError("x_sizes and y_sizes must be positive")
+
     if bins is None: 
         bins = np.geomspace(minlength, maxlength, nbins)
     elif isinstance(bins, int):
         bins = np.geomspace(minlength, maxlength, bins)
+
+    # range of scale checks
+    # check these with the actual calculated bins for greatest relevance
+    if bins[-1] <= bins[0]:
+        raise ValueError(f"bin maximum length ({bins[-1]:.3f}) must be greater than bin minimum length ({bins[0]:.3f}); or if bins are passed, they must be increasing. Did you pass invalid values for minlength/maxlength?")
+
+    if bins[-1] / bins[0] < 10:
+        raise ValueError(f"Available scale ratio ({maxlength/minlength:.2f}) is less than 10. "
+                        f"Need at least one order of magnitude separation for reliable dimension estimation.")
+
 
     C_l = np.zeros(bins.shape)
 
@@ -88,13 +107,37 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, middle_ni
 
         all_boundary_coordinates = get_coords_of_boundaries(array)
 
-        if middle_ninth:
-            middle_coordinates = all_boundary_coordinates[np.argwhere((all_boundary_coordinates[:,0]<int(2*h/3)) & (all_boundary_coordinates[:,0]>int(h/3))).flatten()]
-            middle_coordinates = middle_coordinates[np.argwhere((middle_coordinates[:,1]<int(2*w/3)) & (middle_coordinates[:,1]>int(w/3))).flatten()]
+        if interior_circles_only:
+            # Calculate distance from each boundary coordinate to all array edges
+            coord_locations_x = locations_x[all_boundary_coordinates[:,0], all_boundary_coordinates[:,1]]
+            coord_locations_y = locations_y[all_boundary_coordinates[:,0], all_boundary_coordinates[:,1]]
+            
+            # Distance to each edge for all coordinates
+            dist_to_left = coord_locations_x - locations_x[int(h/2), 0]
+            dist_to_right = locations_x[int(h/2), w-1] - coord_locations_x
+            dist_to_top = coord_locations_y - locations_y[0, int(w/2)]
+            dist_to_bottom = locations_y[h-1, int(w/2)] - coord_locations_y
+            
+            # Find coordinates that are at least maxlength from ALL edges
+            min_dist_to_any_edge = np.minimum.reduce([dist_to_left, dist_to_right, dist_to_top, dist_to_bottom])
+            interior_mask = min_dist_to_any_edge >= maxlength
+            
+            circle_centers = all_boundary_coordinates[interior_mask]
 
-            circle_centers = middle_coordinates
+            if len(circle_centers) == 0:
+                raise ValueError(f"No circle centers remain after interior filtering. "
+                                f"Decrease maxlength (currently {maxlength:.3f}) or consider whether interior_circles_only=True is appropriate.")
+            
+                # Check if sufficient circle centers remain
+            elif len(circle_centers)//point_reduction_factor < 10:
+                warn(f"Only {len(circle_centers)} circle centers remain after interior filtering. "
+                    f"Consider decreasing maxlength or reducing point_reduction_factor for better statistics.")
+                
         else:
             circle_centers = all_boundary_coordinates
+
+        if len(circle_centers)//point_reduction_factor<1:
+            raise ValueError(f'uh oh no circle center locations! is point_reduction_factor={point_reduction_factor} too high?')
 
         if point_reduction_factor>1:
             circle_centers = circle_centers[np.random.choice(np.arange(len(circle_centers)), int(len(circle_centers)/point_reduction_factor), replace=False)]
@@ -692,7 +735,7 @@ def _label_size_helper(labelled_array, separated_structure_indices, labelled_wit
             elif j == labelled_array.shape[1]-1 and labelled_array[i, 0] == 0: perimeter += y_sizes[i,j]
 
             if j != 0 and labelled_array[i, j-1] == 0: perimeter += y_sizes[i,j]
-            elif j == 0 and labelled_array[i, 0] == 0: perimeter += y_sizes[i,j]
+            elif j == 0 and labelled_array[i, labelled_array.shape[1]-1] == 0: perimeter += y_sizes[i,j]
 
             # Area:
             area += y_sizes[i,j] * x_sizes[i,j]
