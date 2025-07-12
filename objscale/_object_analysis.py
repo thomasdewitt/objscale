@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.ndimage import label
-from numba import njit
+from numba import njit, prange
 from numba.typed import List
 from warnings import warn
 from skimage.segmentation import clear_border
@@ -90,24 +90,33 @@ def get_structure_props(array, x_sizes, y_sizes, structure = np.array([[0, 1, 0]
     return p,a,h,w
 
 
-@njit()
+@njit(parallel=True)
 def _get_structure_props_helper(labelled_array, separated_structure_indices, x_sizes, y_sizes):
-    
-    p, a, = [],[]
-    h, w = [],[]
 
-    for indices in separated_structure_indices:
+
+    # Preallocate arrays
+    n_structures = len(separated_structure_indices)
+    p = np.empty(n_structures, dtype=np.float32)
+    a = np.empty(n_structures, dtype=np.float32)
+    h = np.empty(n_structures, dtype=np.float32)
+    w = np.empty(n_structures, dtype=np.float32)
+
+
+    for iteration in prange(len(separated_structure_indices)):
+        iteration = np.int64(iteration) 
+        structure_coords = separated_structure_indices[iteration]
         perimeter = 0
         area = 0
 
-        y_coords_structure = np.array([c[0] for c in indices])
-        x_coords_structure = np.array([c[1] for c in indices])
+        y_coords_structure = np.array([c[0] for c in structure_coords])
+        x_coords_structure = np.array([c[1] for c in structure_coords])
         unique_y_coords = []
         unique_x_coords = []
         height = 0
         width = 0
 
-        for (i,j) in indices:
+        for i,j in structure_coords:
+
             # Height, Width
             if i not in unique_y_coords:
                 unique_y_coords.append(i)
@@ -143,14 +152,16 @@ def _get_structure_props_helper(labelled_array, separated_structure_indices, x_s
             area += y_sizes[i,j] * x_sizes[i,j]
 
 
-        if area != 0: 
-            p.append(perimeter)
-            a.append(area)
-            h.append(height)
-            w.append(width)
-
-
-    return p, a, h, w
+        if area != 0:
+            p[iteration] = perimeter
+            a[iteration] = area
+            h[iteration] = height
+            w[iteration] = width
+            # valid_count += 1
+    
+    # Return only the valid entries
+    valid_mask = (a>0)
+    return p[valid_mask], a[valid_mask], h[valid_mask], w[valid_mask]
 
 
 def label_periodic_boundaries(labelled_array, wrap):

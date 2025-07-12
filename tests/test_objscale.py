@@ -7,6 +7,7 @@ Creates 4 percolation lattices and calculates all parameters
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
+import time
 sys.path.insert(0, '..')
 import objscale
 
@@ -27,7 +28,7 @@ def main():
     
     # Create 4 percolation lattices
     arrays = []
-    for i in range(2):
+    for i in range(4):
         print(f"Creating array {i+1}/4...")
         array = create_percolation_lattice(size, P_C)
         arrays.append(array)
@@ -36,6 +37,7 @@ def main():
     print("\n=== CALCULATING PARAMETERS ===")
     
     # Calculate power-law exponents and get distribution data
+    s = time.time()
     print("Calculating area power-law exponent and distribution...")
     (area_exponent, area_error), (area_sizes, area_counts) = objscale.finite_array_powerlaw_exponent(
         arrays, 'area', bins=50, min_threshold=10, return_counts=True
@@ -46,8 +48,9 @@ def main():
         arrays, 'perimeter', bins=50, min_threshold=10, return_counts=True
     )
     
-    print(f"Area exponent: {area_exponent:.3f} ± {area_error:.3f}")
-    print(f"Perimeter exponent: {perim_exponent:.3f} ± {perim_error:.3f}")
+    print(f'Power law exponents took {time.time()-s:.02f} seconds')
+    print(f"    Area exponent: {area_exponent:.3f} ± {area_error:.3f}")
+    print(f"    Perimeter exponent: {perim_exponent:.3f} ± {perim_error:.3f}")
     
     # Calculate correlation dimension
     print("Calculating correlation dimension...")
