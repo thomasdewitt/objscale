@@ -34,6 +34,10 @@ def main():
         arrays.append(array)
         print(f"  Array {i+1}: {np.sum(array)} occupied sites")
     
+    print('Appending empty array for testing')
+    arrays.append(np.zeros_like(array)) # append empty array for testing
+    print(f"  Array {len(arrays)}: {np.sum(arrays[-1])} occupied sites")
+    
     print("\n=== CALCULATING PARAMETERS ===")
     
     # Calculate power-law exponents and get distribution data
@@ -174,7 +178,7 @@ def main():
     ax1.loglog(10**area_sizes, 10**area_counts, 'bo-', markersize=4, linewidth=1)
     ax1.set_xlabel('Area')
     ax1.set_ylabel('Count')
-    ax1.set_title(f'Area Distribution\\nExponent: {area_exponent:.3f} ± {area_error:.3f}')
+    ax1.set_title(f'Area Distribution\nExponent: {area_exponent:.3f} ± {area_error:.3f}')
     ax1.grid(True, alpha=0.3)
     
     # Plot perimeter distribution (convert from log10 back to linear for plotting)
@@ -182,7 +186,7 @@ def main():
     ax2.loglog(10**perim_sizes, 10**perim_counts, 'ro-', markersize=4, linewidth=1)
     ax2.set_xlabel('Perimeter')
     ax2.set_ylabel('Count')
-    ax2.set_title(f'Perimeter Distribution\\nExponent: {perim_exponent:.3f} ± {perim_error:.3f}')
+    ax2.set_title(f'Perimeter Distribution\nExponent: {perim_exponent:.3f} ± {perim_error:.3f}')
     ax2.grid(True, alpha=0.3)
     
     # Plot correlation integral
@@ -190,7 +194,7 @@ def main():
     ax3.loglog(corr_lengths, corr_integrals, 'go-', markersize=4, linewidth=1)
     ax3.set_xlabel('Length Scale')
     ax3.set_ylabel('Correlation Integral')
-    ax3.set_title(f'Correlation Integral\\nDimension: {corr_dim:.3f} ± {corr_error:.3f}')
+    ax3.set_title(f'Correlation Integral\nDimension: {corr_dim:.3f} ± {corr_error:.3f}')
     ax3.grid(True, alpha=0.3)
     
     # Plot box dimension
@@ -198,7 +202,7 @@ def main():
     ax4.loglog(box_sizes, box_counts, 'mo-', markersize=4, linewidth=1)
     ax4.set_xlabel('Box Size')
     ax4.set_ylabel('Number of Boxes')
-    ax4.set_title(f'Box Dimension\\nDimension: {box_dim:.3f} ± {box_error:.3f}')
+    ax4.set_title(f'Box Dimension\nDimension: {box_dim:.3f} ± {box_error:.3f}')
     ax4.grid(True, alpha=0.3)
     
     # Plot coarsening dimension (total perimeter vs resolution)
@@ -206,7 +210,7 @@ def main():
     ax5.loglog(coarsening_factors, mean_total_perimeters, 'co-', markersize=4, linewidth=1)
     ax5.set_xlabel('Resolution (coarsening factor)')
     ax5.set_ylabel('Total Perimeter')
-    ax5.set_title(f'Coarsening Dimension\\nDimension: {coarsening_dim:.3f} ± {coarsening_error:.3f}')
+    ax5.set_title(f'Coarsening Dimension\nDimension: {coarsening_dim:.3f} ± {coarsening_error:.3f}')
     ax5.grid(True, alpha=0.3)
     
     plt.tight_layout()

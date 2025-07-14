@@ -12,6 +12,11 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, minlength
     """
     Calculate the correlation dimension D where C_l ∝ l^D for binary arrays.
 
+    Requires that each array has the same pixel sizes, although across the array 
+    they may be nonuniform (e.g. increasing from left to right)
+
+    Note that the resulting dimension is for the set of *object edge* points.
+
     Parameters
     ----------
     arrays : list or np.ndarray
@@ -77,11 +82,15 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, minlength
     if minlength == 'auto': minlength = 3*min(np.nanmin(x_sizes), np.nanmin(y_sizes))
 
     # Basic validation checks
+    if np.any(np.isnan(arrays)):
+        raise ValueError('arrays must not contain NaN values')
+    
     if np.any(np.isnan(x_sizes)) or np.any(np.isnan(y_sizes)):
         raise ValueError("x_sizes and y_sizes cannot contain NaN values")
 
     if np.any(x_sizes <= 0) or np.any(y_sizes <= 0):
         raise ValueError("x_sizes and y_sizes must be positive")
+    
 
     if bins is None: 
         bins = np.geomspace(minlength, maxlength, nbins)
@@ -123,25 +132,17 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, minlength
             interior_mask = min_dist_to_any_edge >= maxlength
             
             circle_centers = all_boundary_coordinates[interior_mask]
-
-            if len(circle_centers) == 0:
-                raise ValueError(f"No circle centers remain after interior filtering. "
-                                f"Decrease maxlength (currently {maxlength:.3f}) or consider whether interior_circles_only=True is appropriate.")
-            
-                # Check if sufficient circle centers remain
-            elif len(circle_centers)//point_reduction_factor < 10:
-                warn(f"Only {len(circle_centers)} circle centers remain after interior filtering. "
-                    f"Consider decreasing maxlength or reducing point_reduction_factor for better statistics.")
                 
         else:
             circle_centers = all_boundary_coordinates
 
-        if len(circle_centers)//point_reduction_factor<1:
-            raise ValueError(f'uh oh no circle center locations! is point_reduction_factor={point_reduction_factor} too high?')
+        if len(circle_centers) == 0: continue
 
         if point_reduction_factor>1:
             circle_centers = circle_centers[np.random.choice(np.arange(len(circle_centers)), int(len(circle_centers)/point_reduction_factor), replace=False)]
         elif point_reduction_factor<1: raise ValueError('point_reduction_factor must be >= 1')
+
+        if len(circle_centers) == 0: continue
 
         C_l += correlation_integral(circle_centers, all_boundary_coordinates, locations_x, locations_y, bins)
 
@@ -215,8 +216,11 @@ def ensemble_box_dimension(binary_arrays, set = 'edge', min_pixels=1, min_box_si
 
     if type(binary_arrays) == np.ndarray: binary_arrays = [binary_arrays]
 
-    if type(box_sizes) == str:    # to not try elementwise comparison
-        if box_sizes != 'default': raise ValueError(f'coarsening_factors={box_sizes} not supported')
+    if np.any(np.isnan(binary_arrays)):
+        raise ValueError('arrays must not contain NaN values')
+
+    if type(box_sizes) == str:  
+        if box_sizes != 'default': raise ValueError(f'box_sizes={box_sizes} not supported')
         
         box_sizes = 2**np.arange(1,15)    # assumed any array is smaller than 32768 pixels
     else: box_sizes = np.array(box_sizes)
@@ -229,7 +233,6 @@ def ensemble_box_dimension(binary_arrays, set = 'edge', min_pixels=1, min_box_si
     
     for array in binary_arrays:
         number_boxes = []
-        if np.count_nonzero(np.isnan(array))>0: raise ValueError('array has nan values')
         for factor in box_sizes:
 
             # Coarsen
