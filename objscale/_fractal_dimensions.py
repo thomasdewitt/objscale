@@ -1,5 +1,5 @@
 import numpy as np
-from numba import njit, prange
+import numba
 from numba.typed import List
 from scipy.ndimage import label
 from skimage.segmentation import clear_border
@@ -486,7 +486,7 @@ def get_locations_from_pixel_sizes(pixel_sizes_x, pixel_sizes_y):
     return np.nancumsum(pixel_sizes_x, 1), np.nancumsum(pixel_sizes_y, 0)
 
 
-@njit(parallel=True)
+@numba.njit(parallel=True)
 def correlation_integral(coordinates_to_check, coordinates_to_count, locations_x, locations_y, bins):
     """
     Calculate correlation integral for boundary coordinates.
@@ -517,10 +517,14 @@ def correlation_integral(coordinates_to_check, coordinates_to_count, locations_x
     For example, np.sqrt((locations_x[i,j]-locations_x[p,q])**2 + 
     (locations_y[i,j]-locations_y[p,q])**2) should represent the physical 
     distance between pixel locations at i,j and p,q.
-    """
-    C_l = np.zeros(bins.shape)  # will be count
+    """    
+    # Each thread gets its own copy
+    # This is to eliminate race condition during paralellization
+    C_l_per_thread = np.zeros((numba.config.NUMBA_NUM_THREADS, bins.shape[0]))
     
-    for i in prange(coordinates_to_check.shape[0]):
+    
+    for i in numba.prange(coordinates_to_check.shape[0]):
+        thread_id = numba.get_thread_id()
         for j in range(coordinates_to_count.shape[0]):
             p,q = coordinates_to_check[i]
             r,s = coordinates_to_count[j]
@@ -530,8 +534,11 @@ def correlation_integral(coordinates_to_check, coordinates_to_count, locations_x
             
             distance = np.sqrt((dx**2)+(dy**2))
             for bin_index, bin in enumerate(bins):
-                if distance<bin: C_l[bin_index] += 1
-    return C_l
+                if distance<bin: 
+                    C_l_per_thread[thread_id, bin_index] += 1
+
+    # Return total over all threads
+    return np.sum(C_l_per_thread, axis=0)
 
 
 def coarsen_array(array, factor):
@@ -581,7 +588,7 @@ def coarsen_array(array, factor):
     return coarsened_array
 
 
-@njit()
+@numba.njit()
 def total_perimeter(array, x_sizes, y_sizes):
     """
         Given a binary array, calculate the total perimeter. Boundary conditions are assumed periodic. 
@@ -694,7 +701,7 @@ def label_size(array, variable='area',wrap='both', x_sizes=None, y_sizes=None):
     return labelled_with_sizes
 
 
-@njit()
+@numba.njit()
 def _label_size_helper(labelled_array, separated_structure_indices, labelled_with_sizes, variable, x_sizes, y_sizes):
     
     for indices in separated_structure_indices:
