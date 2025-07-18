@@ -3,7 +3,7 @@ message: "If you use this software, please cite it as below."
 type: software
 authors:
   - family-names: "DeWitt"
-    given-names: "Thomas"
+    given-names: "Thomas D"
     email: "thomas.dewitt@utah.edu"
     orcid: "https://orcid.org/0009-0003-9591-1690"
 title: "objscale: Object-based analysis functions for fractal dimensions and size distributions"
@@ -28,3 +28,4 @@ abstract: >-
   and ensemble fractal dimensions, size distribution analysis, object
   manipulation, and various utility functions for scientific computing
   applications.
+doi: "10.5281/zenodo.16114656"
