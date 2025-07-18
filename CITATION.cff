@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: "DeWitt"
+    given-names: "Thomas"
+    email: "thomas.dewitt@utah.edu"
+    orcid: "https://orcid.org/0009-0003-9591-1690"
+title: "objscale: Object-based analysis functions for fractal dimensions and size distributions"
+version: "0.1.6"
+date-released: "2025-07-18"
+url: "https://github.com/thomasdewitt/objscale"
+repository-code: "https://github.com/thomasdewitt/objscale"
+license: MIT
+keywords:
+  - "fractal"
+  - "dimensions"
+  - "size-distributions"
+  - "object-analysis"
+  - "perimeter"
+  - "area"
+  - "scaling"
+  - "python"
+abstract: >-
+  objscale provides computational tools for analyzing scaling properties of
+  objects in 2D binary arrays, particularly for fractal dimensions and size
+  distributions. The package includes functions for calculating individual
+  and ensemble fractal dimensions, size distribution analysis, object
+  manipulation, and various utility functions for scientific computing
+  applications.
