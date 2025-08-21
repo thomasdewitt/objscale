@@ -9,7 +9,7 @@ Object-based analysis functions for fractal dimensions and size distributions in
 The package implements methods from two main papers:
 
 - [DeWitt & Garrett (2024)](https://acp.copernicus.org/articles/24/8457/2024/) - finite domain effects in size distributions  
-- DeWitt et al. (in prep) - fractal dimensions for cloud field characterization
+- [DeWitt et al. (2025)](https://egusphere.copernicus.org/preprints/2025/egusphere-2025-3486/) - fractal dimensions for cloud field characterization
 
 ## Key Functions
 
