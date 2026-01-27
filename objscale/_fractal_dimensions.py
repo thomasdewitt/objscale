@@ -33,7 +33,7 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, minlength
         Minimum length scale for correlation calculation. If 'auto', uses 3 times
         the minimum pixel size.
     maxlength : str or float, default='auto'
-        Maximum length scale for correlation calculation. If 'auto', uses 0.1 times
+        Maximum length scale for correlation calculation. If 'auto', uses 0.33 times
         the minimum array dimension.
     interior_circles_only : bool, default=True
         If True, only use circle centers that are at least maxlength distance from
@@ -76,8 +76,8 @@ def ensemble_correlation_dimension(arrays, x_sizes=None, y_sizes=None, minlength
     w = x_sizes.shape[1]
 
     if maxlength == 'auto': 
-          # One tenth of min(width, height) of entire array, where width, height are calculated in the center
-        maxlength =  0.1 * min((locations_x[int(h/2), w-1]-locations_x[int(h/2), 0]), (locations_y[h-1, int(w/2)]-locations_y[0, int(w/2)]))
+          # ~One third of min(width, height) of entire array, where width, height are calculated in the center
+        maxlength =  0.33 * min((locations_x[int(h/2), w-1]-locations_x[int(h/2), 0]), (locations_y[h-1, int(w/2)]-locations_y[0, int(w/2)]))
 
     if minlength == 'auto': minlength = 3*min(np.nanmin(x_sizes), np.nanmin(y_sizes))
 
