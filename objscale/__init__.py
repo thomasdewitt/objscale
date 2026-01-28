@@ -9,15 +9,19 @@ from ._fractal_dimensions import (
     individual_fractal_dimension,
     ensemble_correlation_dimension,
     ensemble_box_dimension,
-    ensemble_coarsening_dimension,
     total_perimeter,
     total_number,
     isolate_largest_structure,
     coarsen_array,
+    get_coords_of_boundaries,
+    get_locations_from_pixel_sizes,
+    correlation_integral,
+    label_size,
 )
 
 from ._object_analysis import (
     get_structure_props,
+    get_every_boundary_perimeter,
     remove_structures_touching_border_nan,
     label_periodic_boundaries,
     remove_structure_holes,
@@ -36,12 +40,16 @@ __all__ = [
     'individual_fractal_dimension',
     'ensemble_correlation_dimension',
     'ensemble_box_dimension',
-    'ensemble_coarsening_dimension',
     'total_perimeter',
     'total_number',
     'isolate_largest_structure',
     'coarsen_array',
+    'get_coords_of_boundaries',
+    'get_locations_from_pixel_sizes',
+    'correlation_integral',
+    'label_size',
     'get_structure_props',
+    'get_every_boundary_perimeter',
     'remove_structures_touching_border_nan',
     'label_periodic_boundaries',
     'remove_structure_holes',
@@ -50,7 +58,7 @@ __all__ = [
     'encase_in_value',
 ]
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 __author__ = "Thomas DeWitt"
 __email__ = "thomas.dewitt@utah.edu"
 __description__ = "Object-based analysis functions for fractal dimensions and size distributions"

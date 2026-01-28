@@ -7,6 +7,8 @@ Functions for analyzing and manipulating objects in binary arrays.
 
 .. autofunction:: get_structure_props
 
+.. autofunction:: get_every_boundary_perimeter
+
 .. autofunction:: total_perimeter
 
 .. autofunction:: total_number
@@ -20,3 +22,5 @@ Functions for analyzing and manipulating objects in binary arrays.
 .. autofunction:: remove_structure_holes
 
 .. autofunction:: clear_border_adjacent
+
+.. autofunction:: label_size

@@ -11,7 +11,7 @@ Description
 The package implements methods from two main papers:
 
 - `DeWitt & Garrett (2024) <https://acp.copernicus.org/articles/24/8457/2024/>`_ - finite domain effects in size distributions  
-- DeWitt et al. (in prep) - fractal dimensions for cloud field characterization
+- `DeWitt et al. (2025) <https://doi.org/10.5194/egusphere-2024-1498>`_ - fractal dimensions for cloud field characterization
 
 Installation
 ------------
