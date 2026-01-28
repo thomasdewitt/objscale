@@ -10,14 +10,9 @@ size distribution exponent are determined by: D = log(n_zeros) / log(seed_size).
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
-import os
 import sys
 sys.path.insert(0, '../..')
 import objscale
-
-# Directory for diagnostic plots (in test directory for easy viewing)
-DIAGNOSTIC_DIR = os.path.join(os.path.dirname(__file__), 'diagnostics')
 
 
 # Fractal seeds for recursive generation
@@ -155,15 +150,6 @@ def default_iterations(seed):
         return 7 if seed_arr.shape[0] == 3 else 5
 
 
-def save_diagnostic_plot(fig, filename):
-    """Save diagnostic plot to the diagnostic directory."""
-    os.makedirs(DIAGNOSTIC_DIR, exist_ok=True)
-    filepath = os.path.join(DIAGNOSTIC_DIR, filename)
-    fig.savefig(filepath, dpi=600, bbox_inches='tight')
-    plt.close(fig)
-    # print(f"  Saved: {filepath}")
-
-
 # =============================================================================
 # Test Functions
 # =============================================================================
@@ -175,23 +161,14 @@ def test_ensemble_box_dimension(seed='3x3_center', iterations=None, tolerance=0.
     expected_D = expected_ensemble_dimension(seed)
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
-    dim, error, box_sizes, box_counts = objscale.ensemble_box_dimension(
-        [fractal], return_values=True, min_box_size=10, min_pixels=30
+    dim, error = objscale.ensemble_box_dimension(
+        [fractal], min_box_size=10, min_pixels=30
     )
 
     diff = abs(dim - expected_D)
     passed = diff < tolerance
     status = "PASS" if passed else "FAIL"
     print(f"  box_dimension ({seed}): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
-
-    # Save diagnostic plot
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.loglog(box_sizes, box_counts, 'bo-', markersize=4, linewidth=1)
-    ax.set_xlabel('Box Size')
-    ax.set_ylabel('Number of Boxes')
-    ax.set_title(f'Box Dimension ({seed})\nExpected: {expected_D:.3f}, Got: {dim:.3f}')
-    ax.grid(True, alpha=0.3)
-    save_diagnostic_plot(fig, f'box_dimension_{seed}.png')
 
     assert passed, f"Box dimension {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
 
@@ -203,8 +180,8 @@ def test_ensemble_correlation_dimension(seed='3x3_center', iterations=None, tole
     expected_D = expected_ensemble_dimension(seed)
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
-    dim, error, lengths, integrals = objscale.ensemble_correlation_dimension(
-        [fractal], return_C_l=True, point_reduction_factor=10000,
+    dim, error = objscale.ensemble_correlation_dimension(
+        [fractal], point_reduction_factor=10000,
         minlength=10, maxlength=100, interior_circles_only=False
     )
 
@@ -212,15 +189,6 @@ def test_ensemble_correlation_dimension(seed='3x3_center', iterations=None, tole
     passed = diff < tolerance
     status = "PASS" if passed else "FAIL"
     print(f"  correlation_dimension ({seed}): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
-
-    # Save diagnostic plot
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.loglog(lengths, integrals, 'go-', markersize=4, linewidth=1)
-    ax.set_xlabel('Length Scale')
-    ax.set_ylabel('Correlation Integral')
-    ax.set_title(f'Correlation Dimension ({seed})\nExpected: {expected_D:.3f}, Got: {dim:.3f}')
-    ax.grid(True, alpha=0.3)
-    save_diagnostic_plot(fig, f'correlation_{seed}.png')
 
     assert passed, f"Correlation dimension {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
 
@@ -251,27 +219,16 @@ def test_size_distribution(seed='3x3_center', iterations=None, tolerance=0.001):
 
     results = {}
     for metric, expected_beta in metrics.items():
-        (exponent, error), (log_sizes, log_counts) = objscale.finite_array_powerlaw_exponent(
-            [fractal], metric, bins=10000, min_threshold=10, min_count_threshold = 1, return_counts=True
+        exponent, error = objscale.finite_array_powerlaw_exponent(
+            [fractal], metric, bins=10000, min_threshold=10, min_count_threshold=1
         )
 
-        # Function returns positive exponent
-        computed_beta = exponent
-        diff = abs(computed_beta - expected_beta)
+        diff = abs(exponent - expected_beta)
         passed = diff < tolerance
         results[metric] = passed
 
         status = "PASS" if passed else "FAIL"
-        print(f"  {metric}: expected={expected_beta:.4f}, actual={computed_beta:.4f}, {status}")
-
-        # Save diagnostic plot
-        fig, ax = plt.subplots(figsize=(6, 5))
-        ax.loglog(10**log_sizes, 10**log_counts, 'ro-', markersize=4, linewidth=1)
-        ax.set_xlabel(metric.capitalize())
-        ax.set_ylabel('Count')
-        ax.set_title(f'Size Distribution ({metric}, {seed})\nExpected β: {expected_beta:.3f}, Got: {computed_beta:.3f}')
-        ax.grid(True, alpha=0.3)
-        save_diagnostic_plot(fig, f'size_distribution_{metric}_{seed}.png')
+        print(f"  {metric}: expected={expected_beta:.4f}, actual={exponent:.4f}, {status}")
 
     # Check all passed
     failed_metrics = [m for m, passed in results.items() if not passed]
@@ -299,40 +256,7 @@ def test_individual_fractal_dimension(seed='3x3_center', iterations=None, tolera
     status = "PASS" if passed else "FAIL"
     print(f"  individual_fractal_dimension ({seed}): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
 
-    # Get structure properties for diagnostic plot
-    x_sizes = np.ones(fractal.shape, dtype=np.float32)
-    y_sizes = np.ones(fractal.shape, dtype=np.float32)
-    perimeters, areas, _, _ = objscale.get_structure_props(fractal, x_sizes, y_sizes)
-
-    # Save diagnostic plot
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.loglog(np.sqrt(areas), perimeters, 'b.', alpha=0.3, markersize=2)
-    ax.set_xlabel('sqrt(Area)')
-    ax.set_ylabel('Perimeter')
-    ax.set_title(f'Individual Fractal Dimension ({seed})\nExpected: {expected_D:.3f}, Got: {dim:.3f}')
-    ax.grid(True, alpha=0.3)
-    save_diagnostic_plot(fig, f'individual_fractal_{seed}.png')
-
     assert passed, f"Individual dimension {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
-
-
-def test_fractal_visualization():
-    """Generate and save fractal visualizations for all seed types at high resolution."""
-    print("\n=== Generating Fractal Visualizations (High Resolution) ===")
-
-    for seed in FRACTAL_SEEDS.keys():
-        iterations = default_iterations(seed)
-        fractal = generate_fractal(seed=seed, iterations=iterations)
-
-        # High resolution figure
-        fig, ax = plt.subplots(figsize=(12, 12), dpi=200)
-        ax.imshow(fractal, cmap='binary')
-        ax.set_title(f'Fractal ({seed})\n{fractal.shape[0]}×{fractal.shape[1]}, '
-                     f'{np.sum(fractal)} object pixels', fontsize=14)
-        ax.axis('off')
-        save_diagnostic_plot(fig, f'fractal_{seed}.pdf')
-
-    print("PASSED")
 
 
 # =============================================================================
@@ -344,11 +268,7 @@ def run_all_tests():
     print("=" * 60)
     print("OBJSCALE AUTOMATED FRACTAL DIMENSION TESTS")
     print("=" * 60)
-    print(f"Using seed-based recursive fractals")
-    print(f"Diagnostic plots saved to: {DIAGNOSTIC_DIR}")
-
-    # Generate visualizations first
-    # test_fractal_visualization()
+    print("Using seed-based recursive fractals")
 
     passed = 0
     failed = 0
