@@ -45,6 +45,15 @@ pip install objscale
 
 Complete API reference, detailed examples, and usage guides are available at [objscale.readthedocs.io](https://objscale.readthedocs.io).
 
+## Claude Code Skill
+
+A [Claude Code](https://claude.ai/code) skill is included in this repository. If you use Claude Code and want the `/objscale` skill available globally, copy it to your home directory:
+
+```bash
+mkdir -p ~/.claude/skills/objscale
+cp .claude/skills/objscale/SKILL.md ~/.claude/skills/objscale/
+```
+
 ## Quick Example
 
 ```python
