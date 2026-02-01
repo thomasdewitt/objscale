@@ -45,14 +45,23 @@ pip install objscale
 
 Complete API reference, detailed examples, and usage guides are available at [objscale.readthedocs.io](https://objscale.readthedocs.io).
 
-## Claude Code Skill
+## Agent Skill (Highly Recommended for Agents)
 
-A [Claude Code](https://claude.ai/code) skill is included in this repository. If you use Claude Code and want the `/objscale` skill available globally, copy it to your home directory:
+An agent skill is included in this repository. For Claude Code:
 
 ```bash
 mkdir -p ~/.claude/skills/objscale
 cp .claude/skills/objscale/SKILL.md ~/.claude/skills/objscale/
 ```
+
+Codex:
+
+```bash
+mkdir -p ~/.codex/skills/objscale
+cp .claude/skills/objscale/SKILL.md ~/.codex/skills/objscale/
+```
+
+
 
 ## Quick Example
 
@@ -95,17 +104,20 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 ## Available Functions
 
 ### Fractal Dimensions
+
 - `individual_fractal_dimension` - Fractal dimension of individual objects
 - `ensemble_correlation_dimension` - Correlation dimension for object ensembles
 - `ensemble_box_dimension` - Box-counting dimension for object ensembles
 - `ensemble_coarsening_dimension` - Coarsening-based fractal dimension
 
 ### Size Distributions
+
 - `finite_array_powerlaw_exponent` - Power-law exponents with finite domain corrections
 - `finite_array_size_distribution` - Size distributions with truncation analysis
 - `array_size_distribution` - Basic size distribution for single arrays
 
 ### Object Analysis
+
 - `get_structure_props` - Calculate perimeter, area, width, height of structures
 - `total_perimeter` - Total perimeter of all objects
 - `total_number` - Count number of structures
@@ -115,6 +127,7 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 - `clear_border_adjacent` - Clear structures touching array edges
 
 ### Utilities
+
 - `coarsen_array` - Coarsen array resolution by averaging
 - `linear_regression` - Linear regression with error estimates
 - `encase_in_value` - Add border of specified value around array
@@ -137,7 +150,6 @@ https://doi.org/10.5194/acp-24-8457-2024, 2024.
 
 Thomas D. DeWitt
 University of Utah Department of Atmospheric Sciences
-
 
 Sonnet 4 with Claude Code
 Anthropic
