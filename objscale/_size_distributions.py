@@ -56,6 +56,9 @@ def finite_array_size_distribution(
         If int, auto calculate bin locations and make that number of bins.
         If 1-D array: use these as bin edges or log10(bin edges). They must be uniformly
         linearly or logarithmically spaced (depending on bin_logs).
+        If using per-array ``x_sizes``/``y_sizes`` lists with very different overall
+        scales, pass explicit ``bins`` to avoid auto-bin ranges being dominated by
+        the first array.
     bin_logs : bool, default=True
         If True, bin log10(variable) into logarithmically-spaced bins. If False, bin
         variable into linearly spaced bins.
@@ -126,11 +129,38 @@ def finite_array_size_distribution(
         # Encase the array in nans to ensure objects in contact with the edge are considered truncated
         array = encase_in_value(array)
 
-        no_truncated = remove_structures_touching_border_nan(array)
-        truncated_only = array - no_truncated
+        if variable in ['perimeter','area','height','width']:
+            no_truncated = remove_structures_touching_border_nan(array)
+            truncated_only = array - no_truncated
 
-        truncated_counts += array_size_distribution(truncated_only, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
-        nontruncated_counts += array_size_distribution(no_truncated, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+            truncated_counts += array_size_distribution(truncated_only, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+            nontruncated_counts += array_size_distribution(no_truncated, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+        elif variable == 'nested perimeter':  # nested perimeter
+            # For this case, an edge-touching cloud may have a hole but the hole does not touch the edge. 
+            # We want to count the perimeter of the hole in the non-edge-touching histogram.
+            # print(array)
+            no_truncated = remove_structures_touching_border_nan(array)
+            truncated_but_with_holes_that_are_not_truncated = array - no_truncated
+
+            nontruncated_counts += array_size_distribution(no_truncated, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+
+
+
+
+            cloud_holes_truncated_and_nontruncated = 1-truncated_but_with_holes_that_are_not_truncated
+            cloud_holes_nontruncated = remove_structures_touching_border_nan(cloud_holes_truncated_and_nontruncated)
+            # print(cloud_holes_nontruncated)
+            # exit()
+
+            nontruncated_counts += array_size_distribution(cloud_holes_nontruncated, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+
+            # cloud_holes_truncated = cloud_holes_truncated_and_nontruncated - cloud_holes_nontruncated
+
+            # Now fill in those nontruncated holes to obtain holes+clouds that are only truncated
+            truncated_only = truncated_but_with_holes_that_are_not_truncated + cloud_holes_nontruncated
+
+            truncated_counts += array_size_distribution(truncated_only, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+        else: raise ValueError(f'variable {variable} not supported')
 
     # Find index where number of edge clouds is greater than threshold times total number of clouds
     truncation_index = np.argwhere(truncated_counts > truncation_threshold * (truncated_counts + nontruncated_counts))
@@ -188,6 +218,8 @@ def finite_array_powerlaw_exponent(
         If int, auto calculate bin locations and make that number of bins.
         If 1-D array: use these as log10(bin edges). They must be uniformly
         logarithmically spaced.
+        If using per-array ``x_sizes``/``y_sizes`` lists with very different overall
+        scales, prefer explicit ``bins``.
     min_threshold : float, default=10
         Smallest bin edge. If bin edges are passed, this arg is ignored.
     truncation_threshold : float, default=0.5

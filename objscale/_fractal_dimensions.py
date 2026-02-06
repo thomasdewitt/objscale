@@ -31,8 +31,8 @@ __all__ = [
 
 def ensemble_correlation_dimension(
     arrays: NDArray | list[NDArray],
-    x_sizes: NDArray | list[NDArray] | None = None,
-    y_sizes: NDArray | list[NDArray] | None = None,
+    x_sizes: NDArray | None = None,
+    y_sizes: NDArray | None = None,
     minlength: str | float = 'auto',
     maxlength: str | float = 'auto',
     interior_circles_only: bool = True,
@@ -53,14 +53,12 @@ def ensemble_correlation_dimension(
     ----------
     arrays : list or np.ndarray
         List of binary arrays to calculate correlation dimension of.
-    x_sizes : np.ndarray or list, optional
+    x_sizes : np.ndarray, optional
         Pixel sizes in the x direction. If None, assume all pixel dimensions are 1.
-        If np.ndarray, use these for each array in 'arrays'. If list, assume
-        x_sizes[i] corresponds to arrays[i].
-    y_sizes : np.ndarray or list, optional
+        This single grid is used for every array in ``arrays``.
+    y_sizes : np.ndarray, optional
         Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
-        If np.ndarray, use these for each array in 'arrays'. If list, assume
-        y_sizes[i] corresponds to arrays[i].
+        This single grid is used for every array in ``arrays``.
     minlength : str or float, default='auto'
         Minimum length scale for correlation calculation. If 'auto', uses 3 times
         the minimum pixel size.
@@ -793,9 +791,16 @@ def isolate_largest_structure(
     -------
     np.ndarray
         Boolean array with only the largest structure set to True.
+
+    Raises
+    ------
+    ValueError
+        If ``binary_array`` contains no structures (no non-zero pixels).
     """
     labelled_array = label(binary_array, structure)[0]
     cloud_values = labelled_array[labelled_array != 0]  # remove background
+    if cloud_values.size == 0:
+        raise ValueError('binary_array contains no structures')
     values, counts = np.unique(cloud_values, return_counts=True)
     most_common = values[np.argmax(counts)]
     return labelled_array == most_common
@@ -883,7 +888,7 @@ def label_size(
     separated_structure_indices = np.split(indices_2d, np.where(split_here != 0)[0] + 1)
     separated_structure_indices = separated_structure_indices[1:]  # Remove the locations that were 0 (not structure)
     if len(separated_structure_indices) == 0:
-        return np.zeros(array.shape), 0
+        return np.zeros(array.shape, dtype=int)
 
     labelled_with_sizes = np.zeros(array.shape, dtype=int)
 

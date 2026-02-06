@@ -8,7 +8,7 @@ Object-based analysis functions for fractal dimensions and size distributions in
 
 The package implements methods from two main papers:
 
-- [DeWitt & Garrett (2024)](https://acp.copernicus.org/articles/24/8457/2024/) - finite domain effects in size distributions  
+- [DeWitt & Garrett (2024)](https://acp.copernicus.org/articles/24/8457/2024/acp-24-8457-2024.html) - finite domain effects in size distributions  
 - [DeWitt et al. (2025)](https://egusphere.copernicus.org/preprints/2025/egusphere-2025-3486/) - fractal dimensions for cloud field characterization
 
 ## Key Functions
@@ -28,10 +28,6 @@ Correlation dimension for characterizing the collective scaling properties of ob
 ### `ensemble_box_dimension`
 
 Box-counting dimension for object ensembles. New analyses should prefer `ensemble_correlation_dimension`. Counts boxes containing object boundaries at varying spatial scales.
-
-### `ensemble_coarsening_dimension`
-
-Novel fractal dimension based on how total object perimeter changes under spatial coarsening operations. New analyses should prefer `ensemble_correlation_dimension`. Used in [Rees et. al., 2024](https://npg.copernicus.org/articles/31/497/2024/)
 
 ## Installation
 
@@ -87,7 +83,7 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 
 ## Features
 
-- **Finite domain corrections**: Proper handling of truncation effects at domain boundaries as recommended by [DeWitt & Garrett (2024)]([ACP - Finite domains cause bias in measured and modeled distributions of cloud sizes](https://acp.copernicus.org/articles/24/8457/2024/))
+- **Finite domain corrections**: Proper handling of truncation effects at domain boundaries as recommended by [DeWitt & Garrett (2024)](https://acp.copernicus.org/articles/24/8457/2024/acp-24-8457-2024.html)
 - **Multiple size metrics**: Area, perimeter, width, height, nested perimeter
 - **Arbitrary boundaries**: Support for NaN-demarcated non-rectangular domains  
 - **Individual and Ensemble methods**: Characterize both individual and collective properties of object fields
@@ -108,7 +104,6 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 - `individual_fractal_dimension` - Fractal dimension of individual objects
 - `ensemble_correlation_dimension` - Correlation dimension for object ensembles
 - `ensemble_box_dimension` - Box-counting dimension for object ensembles
-- `ensemble_coarsening_dimension` - Coarsening-based fractal dimension
 
 ### Size Distributions
 
