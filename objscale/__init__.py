@@ -31,6 +31,7 @@ from ._object_analysis import (
 from ._utils import (
     linear_regression,
     encase_in_value,
+    set_num_threads,
 )
 
 __all__ = [
@@ -56,9 +57,10 @@ __all__ = [
     'clear_border_adjacent',
     'linear_regression',
     'encase_in_value',
+    'set_num_threads',
 ]
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 __author__ = "Thomas DeWitt"
 __email__ = "thomas.dewitt@utah.edu"
 __description__ = "Object-based analysis functions for fractal dimensions and size distributions"

@@ -3,8 +3,30 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 from warnings import warn
+import numba
 
-__all__ = ['linear_regression', 'encase_in_value']
+__all__ = ['linear_regression', 'encase_in_value', 'set_num_threads']
+
+
+def set_num_threads(n: int) -> None:
+    """
+    Set the number of threads used for parallel computations.
+
+    Controls the number of threads Numba uses for parallel operations
+    such as correlation integral calculation and structure property analysis.
+
+    Parameters
+    ----------
+    n : int
+        Number of threads to use. Must be between 1 and the number of
+        logical CPU cores available.
+
+    Raises
+    ------
+    ValueError
+        If n is less than 1 or greater than the available CPU count.
+    """
+    numba.set_num_threads(n)
 
 
 def linear_regression(
