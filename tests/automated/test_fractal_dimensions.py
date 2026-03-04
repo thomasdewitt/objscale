@@ -173,7 +173,7 @@ def test_ensemble_box_dimension(seed='3x3_center', iterations=None, tolerance=0.
     assert passed, f"Box dimension {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
 
 
-def test_ensemble_correlation_dimension(seed='3x3_center', iterations=None, tolerance=0.05):
+def test_ensemble_correlation_dimension(seed='3x3_center', iterations=None, tolerance=0.01):
     """Test ensemble correlation dimension."""
     if iterations is None:
         iterations = default_iterations(seed)
@@ -181,8 +181,8 @@ def test_ensemble_correlation_dimension(seed='3x3_center', iterations=None, tole
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
     dim, error = objscale.ensemble_correlation_dimension(
-        [fractal], point_reduction_factor=10000,
-        minlength=10, maxlength=100, interior_circles_only=False
+        [fractal], point_reduction_factor=500,
+        minlength=10, maxlength=300, interior_circles_only=True
     )
 
     diff = abs(dim - expected_D)
@@ -191,6 +191,106 @@ def test_ensemble_correlation_dimension(seed='3x3_center', iterations=None, tole
     print(f"  correlation_dimension ({seed}): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
 
     assert passed, f"Correlation dimension {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
+
+
+def test_ensemble_correlation_dimension_nonuniform(seed='3x3_center', iterations=None, tolerance=0.01):
+    """Test ensemble correlation dimension with non-uniform pixel sizes.
+
+    Tests several configurations where pixel resolution is increased along
+    one axis while keeping the same physical dimensions:
+    - Uniform scaling: dx=0.5, dy=0.5, dx=1/3, dy=1/3
+    - Mid-array resolution change: dx halves or dy halves partway through
+    The derived dimension should match the expected fractal dimension.
+    """
+    if iterations is None:
+        iterations = default_iterations(seed)
+    expected_D = expected_ensemble_dimension(seed)
+    fractal = generate_fractal(seed=seed, iterations=iterations)
+    nrows, ncols = fractal.shape
+
+    # --- Uniform non-uniform pixel sizes ---
+    uniform_configs = [
+        ('dx=0.5', 0.5, 1.0),
+        ('dy=0.5', 1.0, 0.5),
+        ('dx=1/3', 1/3, 1.0),
+        ('dy=1/3', 1.0, 1/3),
+    ]
+
+    for label, dx, dy in uniform_configs:
+        if dx < 1.0:
+            factor = int(round(1.0 / dx))
+            stretched = np.repeat(fractal, factor, axis=1)
+        elif dy < 1.0:
+            factor = int(round(1.0 / dy))
+            stretched = np.repeat(fractal, factor, axis=0)
+        else:
+            stretched = fractal
+
+        x_sizes = np.full(stretched.shape, dx, dtype=np.float64)
+        y_sizes = np.full(stretched.shape, dy, dtype=np.float64)
+
+        dim, error = objscale.ensemble_correlation_dimension(
+            [stretched], x_sizes=x_sizes, y_sizes=y_sizes,
+            point_reduction_factor=500,
+            minlength=10, maxlength=300, interior_circles_only=True
+        )
+
+        diff = abs(dim - expected_D)
+        passed = diff < tolerance
+        status = "PASS" if passed else "FAIL"
+        print(f"  correlation_nonuniform ({seed}, {label}): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
+
+        assert passed, (
+            f"Correlation dimension {dim:.4f} with {label} differs from "
+            f"expected {expected_D:.4f} by more than {tolerance}"
+        )
+
+    # --- Mid-array resolution change ---
+    # dx halves halfway through columns
+    mid_col = ncols // 2
+    left = fractal[:, :mid_col]
+    right_stretched = np.repeat(fractal[:, mid_col:], 2, axis=1)
+    stretched = np.concatenate([left, right_stretched], axis=1)
+    x_sizes = np.ones(stretched.shape, dtype=np.float64)
+    x_sizes[:, left.shape[1]:] = 0.5
+    y_sizes = np.ones(stretched.shape, dtype=np.float64)
+
+    dim, error = objscale.ensemble_correlation_dimension(
+        [stretched], x_sizes=x_sizes, y_sizes=y_sizes,
+        point_reduction_factor=500,
+        minlength=10, maxlength=300, interior_circles_only=True
+    )
+    diff = abs(dim - expected_D)
+    passed = diff < tolerance
+    status = "PASS" if passed else "FAIL"
+    print(f"  correlation_nonuniform ({seed}, dx_halves_mid): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
+    assert passed, (
+        f"Correlation dimension {dim:.4f} with dx_halves_mid differs from "
+        f"expected {expected_D:.4f} by more than {tolerance}"
+    )
+
+    # dy halves halfway through rows
+    mid_row = nrows // 2
+    top = fractal[:mid_row, :]
+    bottom_stretched = np.repeat(fractal[mid_row:, :], 2, axis=0)
+    stretched = np.concatenate([top, bottom_stretched], axis=0)
+    x_sizes = np.ones(stretched.shape, dtype=np.float64)
+    y_sizes = np.ones(stretched.shape, dtype=np.float64)
+    y_sizes[top.shape[0]:, :] = 0.5
+
+    dim, error = objscale.ensemble_correlation_dimension(
+        [stretched], x_sizes=x_sizes, y_sizes=y_sizes,
+        point_reduction_factor=500,
+        minlength=10, maxlength=300, interior_circles_only=True
+    )
+    diff = abs(dim - expected_D)
+    passed = diff < tolerance
+    status = "PASS" if passed else "FAIL"
+    print(f"  correlation_nonuniform ({seed}, dy_halves_mid): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
+    assert passed, (
+        f"Correlation dimension {dim:.4f} with dy_halves_mid differs from "
+        f"expected {expected_D:.4f} by more than {tolerance}"
+    )
 
 
 def test_size_distribution(seed='3x3_center', iterations=None, tolerance=0.001):
@@ -277,6 +377,7 @@ def run_all_tests():
         tests = [
             lambda s=seed: test_ensemble_box_dimension(seed=s),
             lambda s=seed: test_ensemble_correlation_dimension(seed=s),
+            lambda s=seed: test_ensemble_correlation_dimension_nonuniform(seed=s),
             lambda s=seed: test_size_distribution(seed=s),
             lambda s=seed: test_individual_fractal_dimension(seed=s),
         ]
