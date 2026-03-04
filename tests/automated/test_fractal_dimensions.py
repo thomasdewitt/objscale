@@ -293,6 +293,55 @@ def test_ensemble_correlation_dimension_nonuniform(seed='3x3_center', iterations
     )
 
 
+def test_ensemble_correlation_dimension_nonuniform_integer_repeats(
+    seed='3x3_center', iterations=None, tolerance=0.01
+):
+    """Test correlation dimension with irregular integer repeat factors.
+
+    Builds an equivalent fractal in physical space by repeating rows/columns by
+    integer factors and assigning reciprocal pixel sizes to the repeated pixels.
+    """
+    if iterations is None:
+        iterations = default_iterations(seed)
+    expected_D = expected_ensemble_dimension(seed)
+    fractal = generate_fractal(seed=seed, iterations=iterations)
+    nrows, ncols = fractal.shape
+
+    x_repeat_pattern = np.array([1, 2, 1, 3], dtype=np.int32)
+    y_repeat_pattern = np.array([2, 1, 3, 1], dtype=np.int32)
+    x_repeats = x_repeat_pattern[np.arange(ncols) % x_repeat_pattern.size]
+    y_repeats = y_repeat_pattern[np.arange(nrows) % y_repeat_pattern.size]
+
+    stretched = np.repeat(np.repeat(fractal, y_repeats, axis=0), x_repeats, axis=1)
+
+    x_sizes_1d = np.concatenate([np.full(f, 1.0 / f) for f in x_repeats]).astype(np.float64)
+    y_sizes_1d = np.concatenate([np.full(f, 1.0 / f) for f in y_repeats]).astype(np.float64)
+    x_sizes = np.tile(x_sizes_1d, (stretched.shape[0], 1))
+    y_sizes = np.tile(y_sizes_1d[:, None], (1, stretched.shape[1]))
+
+    # Keep deterministic behavior despite random center subsampling.
+    random_state = np.random.get_state()
+    np.random.seed(0)
+    try:
+        dim, error = objscale.ensemble_correlation_dimension(
+            [stretched], x_sizes=x_sizes, y_sizes=y_sizes,
+            point_reduction_factor=500,
+            minlength=10, maxlength=300, interior_circles_only=True
+        )
+    finally:
+        np.random.set_state(random_state)
+
+    diff = abs(dim - expected_D)
+    passed = diff < tolerance
+    status = "PASS" if passed else "FAIL"
+    print(f"  correlation_integer_repeats ({seed}): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
+
+    assert passed, (
+        f"Correlation dimension {dim:.4f} with integer repeat-resolved pixel sizes "
+        f"differs from expected {expected_D:.4f} by more than {tolerance}"
+    )
+
+
 def test_size_distribution(seed='3x3_center', iterations=None, tolerance=0.001):
     """
     Test size distribution exponents for area, height, width, perimeter.
@@ -381,6 +430,9 @@ def run_all_tests():
             lambda s=seed: test_size_distribution(seed=s),
             lambda s=seed: test_individual_fractal_dimension(seed=s),
         ]
+
+        if seed == '3x3_center':
+            tests.append(lambda s=seed: test_ensemble_correlation_dimension_nonuniform_integer_repeats(seed=s))
 
         for test_func in tests:
             try:

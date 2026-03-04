@@ -183,7 +183,24 @@ def ensemble_correlation_dimension(
         if len(circle_centers) == 0:
             continue
 
-        C_l += correlation_integral(circle_centers, all_boundary_coordinates, locations_x, locations_y, bins)
+        # Convert index coordinates to physical coordinates for bounding box
+        boundary_phys_x = locations_x[all_boundary_coordinates[:, 0], all_boundary_coordinates[:, 1]]
+        boundary_phys_y = locations_y[all_boundary_coordinates[:, 0], all_boundary_coordinates[:, 1]]
+        boundary_phys = np.column_stack([boundary_phys_x, boundary_phys_y])
+
+        center_phys_x = locations_x[circle_centers[:, 0], circle_centers[:, 1]]
+        center_phys_y = locations_y[circle_centers[:, 0], circle_centers[:, 1]]
+        center_phys = np.column_stack([center_phys_x, center_phys_y])
+
+        # Sort boundary points by physical y for binary-search bounding box
+        sort_order = np.argsort(boundary_phys[:, 1])
+        sorted_boundary_phys = boundary_phys[sort_order]
+
+        max_bin = bins[-1]
+        bins_sq = bins ** 2
+
+        C_l += correlation_integral(center_phys, sorted_boundary_phys,
+                                    bins_sq, max_bin)
 
     # Perform linear regression to estimate dimension
     x, y = np.log10(bins), np.log10(C_l)
@@ -597,56 +614,81 @@ def get_locations_from_pixel_sizes(
 
 
 @numba.njit(parallel=True)
-def correlation_integral(coordinates_to_check, coordinates_to_count, locations_x, locations_y, bins):
+def correlation_integral(centers_phys, sorted_boundary_phys, bins_sq, max_bin):
     """
     Calculate correlation integral for boundary coordinates.
 
-    For each coordinates_to_check, calculate how many coordinates_to_count are
-    less than a distance bin_i of the chosen coordinate, for each bin_i in bins.
+    For each center, count how many boundary points are within each distance
+    threshold. Uses physical coordinates directly for correct bounding on any
+    grid geometry (including non-uniform and 2D-varying pixel sizes).
 
     Parameters
     ----------
-    coordinates_to_check : np.ndarray
-        Array of coordinates of boundaries of shape [[x1,y1], [x2,y2], [x3,y3], ...].
-    coordinates_to_count : np.ndarray
-        Array of coordinates to count within distance bins.
-    locations_x : np.ndarray
-        X locations of each pixel.
-    locations_y : np.ndarray
-        Y locations of each pixel.
-    bins : np.ndarray
-        1-D array of distances to bin.
+    centers_phys : np.ndarray
+        Physical (x, y) coordinates of circle centers, shape (N, 2).
+    sorted_boundary_phys : np.ndarray
+        Physical (x, y) coordinates of boundary points, shape (M, 2),
+        sorted by y coordinate.
+    bins_sq : np.ndarray
+        1-D array of squared distance thresholds (bins**2), sorted ascending.
+    max_bin : float
+        Maximum bin distance (sqrt of bins_sq[-1]).
 
     Returns
     -------
     C_l : np.ndarray
-        Correlation integral values, same shape as bins.
+        Correlation integral values, same shape as bins_sq.
 
     Notes
     -----
-    For example, np.sqrt((locations_x[i,j]-locations_x[p,q])**2 +
-    (locations_y[i,j]-locations_y[p,q])**2) should represent the physical
-    distance between pixel locations at i,j and p,q.
+    Uses three optimizations over the naive approach:
+    1. Bounding box in physical space via sort + binary search on y coordinate.
+    2. Squared distances to avoid sqrt in the inner loop.
+    3. Binary-search binning with forward cumulative sum instead of linear scan.
     """
-    # Each thread gets its own copy to eliminate race condition during parallelization
-    C_l_per_thread = np.zeros((numba.config.NUMBA_NUM_THREADS, bins.shape[0]))
+    sorted_y = sorted_boundary_phys[:, 1].copy()
+    num_bins = bins_sq.shape[0]
 
-    for i in numba.prange(coordinates_to_check.shape[0]):
+    # Each thread gets its own histogram to eliminate race conditions
+    hist_per_thread = np.zeros((numba.config.NUMBA_NUM_THREADS, num_bins))
+
+    for i in numba.prange(centers_phys.shape[0]):
         thread_id = numba.get_thread_id()
-        for j in range(coordinates_to_count.shape[0]):
-            p, q = coordinates_to_check[i]
-            r, s = coordinates_to_count[j]
+        cx = centers_phys[i, 0]
+        cy = centers_phys[i, 1]
 
-            dx = (locations_x[p, q] - locations_x[r, s])
-            dy = (locations_y[p, q] - locations_y[r, s])
+        # Binary search for physical y bounding box
+        lo = np.searchsorted(sorted_y, cy - max_bin, side='left')
+        hi = np.searchsorted(sorted_y, cy + max_bin, side='right')
 
-            distance = np.sqrt((dx ** 2) + (dy ** 2))
-            for bin_index, bin in enumerate(bins):
-                if distance < bin:
-                    C_l_per_thread[thread_id, bin_index] += 1
+        for j in range(lo, hi):
+            bx = sorted_boundary_phys[j, 0]
 
-    # Return total over all threads
-    return np.sum(C_l_per_thread, axis=0)
+            # Physical x bounding box check
+            if abs(bx - cx) > max_bin:
+                continue
+
+            dx = cx - bx
+            dy = cy - sorted_boundary_phys[j, 1]
+            dist_sq = dx * dx + dy * dy
+
+            # Binary search: find first bin where bins_sq[bin_idx] > dist_sq
+            bin_idx = np.searchsorted(bins_sq, dist_sq, side='right')
+            if bin_idx < num_bins:
+                hist_per_thread[thread_id, bin_idx] += 1
+
+    # Sum across threads
+    hist = np.sum(hist_per_thread, axis=0)
+
+    # Forward cumulative sum: convert histogram to cumulative counts
+    # hist[k] = count of pairs whose first qualifying bin index is k
+    # C_l[k] = count of pairs with dist_sq < bins_sq[k] = sum of hist[0..k]
+    C_l = np.zeros(num_bins)
+    cumsum = 0.0
+    for k in range(num_bins):
+        cumsum += hist[k]
+        C_l[k] = cumsum
+    return C_l
 
 
 def coarsen_array(array: NDArray, factor: int) -> NDArray:

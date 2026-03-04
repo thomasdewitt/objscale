@@ -15,7 +15,6 @@ from ._fractal_dimensions import (
     coarsen_array,
     get_coords_of_boundaries,
     get_locations_from_pixel_sizes,
-    correlation_integral,
     label_size,
 )
 
@@ -47,7 +46,6 @@ __all__ = [
     'coarsen_array',
     'get_coords_of_boundaries',
     'get_locations_from_pixel_sizes',
-    'correlation_integral',
     'label_size',
     'get_structure_props',
     'get_every_boundary_perimeter',
@@ -60,7 +58,7 @@ __all__ = [
     'set_num_threads',
 ]
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 __author__ = "Thomas DeWitt"
 __email__ = "thomas.dewitt@utah.edu"
 __description__ = "Object-based analysis functions for fractal dimensions and size distributions"
