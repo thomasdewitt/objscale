@@ -1,3 +1,6 @@
+![Correlation dimension example from DeWitt et al. (2025)](docs/images/correlation_dimension_example-1.png)
+*Figure from DeWitt et al. (2025)*
+
 # objscale
 
 Object-based analysis functions for fractal dimensions and size distributions in atmospheric sciences and beyond. Optimized for large datasets.
@@ -10,6 +13,8 @@ The package implements methods from two main papers:
 
 - [DeWitt & Garrett (2024)](https://acp.copernicus.org/articles/24/8457/2024/acp-24-8457-2024.html) - finite domain effects in size distributions  
 - [DeWitt et al. (2025)](https://egusphere.copernicus.org/preprints/2025/egusphere-2025-3486/) - fractal dimensions for cloud field characterization
+
+See the [interactive scaling explorer](https://thomasddewitt.com/visuals-and-tools/scaling-explorer/index.html) to visualize how the correlation dimension is computed.
 
 ## Key Functions
 
@@ -56,8 +61,6 @@ Codex:
 mkdir -p ~/.codex/skills/objscale
 cp .claude/skills/objscale/SKILL.md ~/.codex/skills/objscale/
 ```
-
-
 
 ## Quick Example
 
