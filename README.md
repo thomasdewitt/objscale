@@ -26,6 +26,10 @@ Calculate power-law exponents for size distributions while accounting for finite
 
 Fractal dimension of individual objects using the perimeter-area relationship, with proper handling of interior holes and resolution effects.
 
+### `individual_correlation_dimension`
+
+Correlation dimension of a single object. Isolates the Nth largest structure in an array (after removing border-touching structures) and computes its correlation dimension.
+
 ### `ensemble_correlation_dimension`
 
 Correlation dimension for characterizing the collective scaling properties of object ensembles. Uses point-pair correlation analysis across multiple length scales.
@@ -104,7 +108,8 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 
 ### Fractal Dimensions
 
-- `individual_fractal_dimension` - Fractal dimension of individual objects
+- `individual_fractal_dimension` - Fractal dimension of individual objects (perimeter-area scaling)
+- `individual_correlation_dimension` - Correlation dimension of a single object
 - `ensemble_correlation_dimension` - Correlation dimension for object ensembles
 - `ensemble_box_dimension` - Box-counting dimension for object ensembles
 
@@ -117,11 +122,14 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 ### Object Analysis
 
 - `get_structure_props` - Calculate perimeter, area, width, height of structures
+- `get_every_boundary_perimeter` - Perimeters of every boundary including nested holes
 - `total_perimeter` - Total perimeter of all objects
 - `total_number` - Count number of structures
 - `isolate_nth_largest_structure` - Extract the Nth largest connected structure
 - `remove_structures_touching_border_nan` - Remove border-touching structures
 - `remove_structure_holes` - Fill holes in structures
+- `label_size` - Label each structure with its size value
+- `label_periodic_boundaries` - Merge labels across periodic boundaries
 - `clear_border_adjacent` - Clear structures touching array edges
 
 ### Utilities
@@ -129,6 +137,9 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 - `coarsen_array` - Coarsen array resolution by averaging
 - `linear_regression` - Linear regression with error estimates
 - `encase_in_value` - Add border of specified value around array
+- `get_coords_of_boundaries` - Find boundary pixel coordinates (toroidal topology)
+- `get_locations_from_pixel_sizes` - Convert pixel size arrays to cumulative locations
+- `set_num_threads` - Set number of threads for parallel computations
 
 For detailed parameter descriptions and usage examples, see the [full documentation](https://objscale.readthedocs.io) or use `help(objscale.function_name)` or `objscale.function_name?` in IPython/Jupyter.
 

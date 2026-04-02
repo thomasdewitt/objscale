@@ -5,7 +5,7 @@ description: Use when working with objscale package for analyzing 2D binary arra
 
 # objscale Package Reference
 
-Object-based analysis functions for fractal dimensions and size distributions in **2D binary arrays**.
+Object-based analysis functions for fractal dimensions and size distributions in **2D binary arrays**. Version **1.1.0**.
 
 **Documentation**: https://objscale.readthedocs.io
 
@@ -32,7 +32,8 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 | Task | Function | Notes |
 |------|----------|-------|
 | **Recommended** ensemble fractal dimension | `ensemble_correlation_dimension` | Most robust method |
-| Individual object fractal dimension | `individual_fractal_dimension` | Uses perimeter-area scaling |
+| Correlation dimension of a single object | `individual_correlation_dimension` | Isolates Nth largest structure, computes correlation dim |
+| Individual object fractal dimension (perimeter-area) | `individual_fractal_dimension` | Uses perimeter-area scaling with optional binning |
 | Box-counting dimension | `ensemble_box_dimension` | Classic method, prefer correlation |
 
 **Note**: Do not use `ensemble_coarsening_dimension` - it has ambiguity issues with binary array coarsening.
@@ -54,12 +55,14 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 | Task | Function |
 |------|----------|
 | Get perimeter, area, width, height | `get_structure_props` |
+| Get every boundary perimeter (incl. nested) | `get_every_boundary_perimeter` |
 | Total perimeter of all objects | `total_perimeter` |
 | Count objects | `total_number` |
 | Extract Nth largest object | `isolate_nth_largest_structure` |
 | Remove border-touching objects | `remove_structures_touching_border_nan` |
 | Fill holes in objects | `remove_structure_holes` |
 | Label objects by size | `label_size` |
+| Merge periodic boundary labels | `label_periodic_boundaries` |
 | Clear border-adjacent structures | `clear_border_adjacent` |
 
 ### Utilities
@@ -69,6 +72,9 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 | Reduce array resolution | `coarsen_array` |
 | Linear regression with errors | `linear_regression` |
 | Add border to array | `encase_in_value` |
+| Find boundary pixel coordinates | `get_coords_of_boundaries` |
+| Convert pixel sizes to locations | `get_locations_from_pixel_sizes` |
+| Set number of parallel threads | `set_num_threads` |
 
 ## Function Signatures
 
@@ -90,12 +96,27 @@ objscale.ensemble_correlation_dimension(
 ```
 
 ```python
+objscale.individual_correlation_dimension(
+    array,                       # Single 2D binary array
+    n=1,                         # Which structure (1=largest after border removal)
+    x_sizes=None,                # Pixel sizes in x
+    y_sizes=None,                # Pixel sizes in y
+    minlength='auto',            # Min scale
+    maxlength='auto',            # Max scale
+    return_C_l=False,            # Return (dim, err, bins, C_l)
+    point_reduction_factor=1,    # Subsample points (>=1)
+    nbins=50                     # Number of scale bins
+) -> (dimension, error) | (dimension, error, bins, C_l)
+```
+
+```python
 objscale.individual_fractal_dimension(
     arrays,                # Binary arrays (list or single)
     x_sizes=None,          # Pixel sizes in x
     y_sizes=None,          # Pixel sizes in y
     min_a=10,              # Min area to include
     max_a=np.inf,          # Max area to include
+    bins=30,               # Number of bins for averaging (None = no binning)
     return_values=False    # Return (dim, err, log10_sqrt_a, log10_p)
 ) -> (dimension, error) | (dimension, error, log10_sqrt_a, log10_p)
 ```
@@ -154,6 +175,22 @@ objscale.array_size_distribution(
 ```
 
 ### Object Analysis
+
+```python
+objscale.get_every_boundary_perimeter(
+    array,                 # 2D binary array (0s and 1s)
+    x_sizes,               # Pixel sizes in x
+    y_sizes,               # Pixel sizes in y
+    return_nlevels=False   # Also return number of nesting levels
+) -> list | (list, int)   # Perimeters of each boundary (incl. nested holes)
+```
+
+```python
+objscale.label_periodic_boundaries(
+    labelled_array,    # Output of scipy.ndimage.label()
+    wrap               # 'sides' or 'both'
+) -> np.ndarray       # Array with periodic boundary labels merged
+```
 
 ```python
 objscale.get_structure_props(
@@ -233,6 +270,25 @@ objscale.linear_regression(
     x,   # Independent variable (1D array)
     y    # Dependent variable (1D array)
 ) -> ((slope, intercept), (slope_error, intercept_error))  # 95% CI errors
+```
+
+```python
+objscale.set_num_threads(
+    n    # Number of threads for parallel computations (Numba)
+) -> None
+```
+
+```python
+objscale.get_coords_of_boundaries(
+    array    # 2D binary array
+) -> np.ndarray   # Shape (n_boundaries, 2) - indices of boundary pixels (toroidal topology)
+```
+
+```python
+objscale.get_locations_from_pixel_sizes(
+    pixel_sizes_x,    # 2D array of pixel sizes in x
+    pixel_sizes_y     # 2D array of pixel sizes in y
+) -> (locations_x, locations_y)   # Cumulative location coordinates
 ```
 
 ```python
