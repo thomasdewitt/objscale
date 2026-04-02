@@ -7,11 +7,12 @@ from ._size_distributions import (
 
 from ._fractal_dimensions import (
     individual_fractal_dimension,
+    individual_correlation_dimension,
     ensemble_correlation_dimension,
     ensemble_box_dimension,
     total_perimeter,
     total_number,
-    isolate_largest_structure,
+    isolate_nth_largest_structure,
     coarsen_array,
     get_coords_of_boundaries,
     get_locations_from_pixel_sizes,
@@ -38,11 +39,12 @@ __all__ = [
     'finite_array_powerlaw_exponent',
     'array_size_distribution',
     'individual_fractal_dimension',
+    'individual_correlation_dimension',
     'ensemble_correlation_dimension',
     'ensemble_box_dimension',
     'total_perimeter',
     'total_number',
-    'isolate_largest_structure',
+    'isolate_nth_largest_structure',
     'coarsen_array',
     'get_coords_of_boundaries',
     'get_locations_from_pixel_sizes',
@@ -58,7 +60,7 @@ __all__ = [
     'set_num_threads',
 ]
 
-__version__ = "0.2.3"
+__version__ = "1.0.0"
 __author__ = "Thomas DeWitt"
 __email__ = "thomas.dewitt@utah.edu"
 __description__ = "Object-based analysis functions for fractal dimensions and size distributions"

@@ -408,6 +408,30 @@ def test_individual_fractal_dimension(seed='3x3_center', iterations=None, tolera
     assert passed, f"Individual dimension {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
 
 
+def test_individual_correlation_dimension(tolerance=0.05):
+    """
+    Test individual correlation dimension on a 1D line (wide "eye" shape).
+
+    A single row of pixels has boundary points forming a 1D set,
+    so the correlation dimension should be exactly 1.
+    """
+    # Build a wide eye: NaN border, zeros inside, one row of 1s
+    width = 2000
+    arr = np.full((5, width), np.nan)
+    arr[1:-1, 1:-1] = 0
+    arr[2, 2:-2] = 1  # single row of pixels
+
+    expected_D = 1.0
+    dim, error = objscale.individual_correlation_dimension(arr, n=1)
+
+    diff = abs(dim - expected_D)
+    passed = diff < tolerance
+    status = "PASS" if passed else "FAIL"
+    print(f"  individual_correlation_dimension (eye): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
+
+    assert passed, f"Individual correlation dimension {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
+
+
 # =============================================================================
 # Main test runner
 # =============================================================================

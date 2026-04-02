@@ -56,7 +56,7 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 | Get perimeter, area, width, height | `get_structure_props` |
 | Total perimeter of all objects | `total_perimeter` |
 | Count objects | `total_number` |
-| Extract largest object | `isolate_largest_structure` |
+| Extract Nth largest object | `isolate_nth_largest_structure` |
 | Remove border-touching objects | `remove_structures_touching_border_nan` |
 | Fill holes in objects | `remove_structure_holes` |
 | Label objects by size | `label_size` |
@@ -182,10 +182,11 @@ objscale.total_number(
 ```
 
 ```python
-objscale.isolate_largest_structure(
+objscale.isolate_nth_largest_structure(
     binary_array,    # Binary input array
+    n=1,             # Which structure (1=largest, 2=second largest, ...)
     structure=...    # Connectivity (default: 4-connected)
-) -> np.ndarray[bool]   # Boolean array with only largest structure True
+) -> np.ndarray[bool]   # Boolean array with only Nth largest structure True
 ```
 
 ```python

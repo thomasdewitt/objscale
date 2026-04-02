@@ -100,9 +100,9 @@ def main():
     total_perim = objscale.total_perimeter(test_array.astype(np.float32), x_sizes, y_sizes)
     print(f"Total perimeter: {total_perim:.2f}")
     
-    # Test isolate_largest_structure
-    print("Testing isolate_largest_structure...")
-    largest_struct = objscale.isolate_largest_structure(test_array)
+    # Test isolate_nth_largest_structure
+    print("Testing isolate_nth_largest_structure...")
+    largest_struct = objscale.isolate_nth_largest_structure(test_array)
     print(f"Largest structure has {np.sum(largest_struct)} pixels")
     
     # Test coarsen_array

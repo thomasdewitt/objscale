@@ -13,7 +13,7 @@ Functions for analyzing and manipulating objects in binary arrays.
 
 .. autofunction:: total_number
 
-.. autofunction:: isolate_largest_structure
+.. autofunction:: isolate_nth_largest_structure
 
 .. autofunction:: remove_structures_touching_border_nan
 

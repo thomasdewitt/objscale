@@ -119,7 +119,7 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 - `get_structure_props` - Calculate perimeter, area, width, height of structures
 - `total_perimeter` - Total perimeter of all objects
 - `total_number` - Count number of structures
-- `isolate_largest_structure` - Extract the largest connected structure
+- `isolate_nth_largest_structure` - Extract the Nth largest connected structure
 - `remove_structures_touching_border_nan` - Remove border-touching structures
 - `remove_structure_holes` - Fill holes in structures
 - `clear_border_adjacent` - Clear structures touching array edges

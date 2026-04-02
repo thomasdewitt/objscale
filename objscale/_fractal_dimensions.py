@@ -24,7 +24,8 @@ __all__ = [
     'coarsen_array',
     'total_perimeter',
     'total_number',
-    'isolate_largest_structure',
+    'individual_correlation_dimension',
+    'isolate_nth_largest_structure',
     'label_size',
 ]
 
@@ -219,6 +220,137 @@ def ensemble_correlation_dimension(
         return dimension, error, bins, C_l
     else:
         return dimension, error
+
+
+def individual_correlation_dimension(
+    array: NDArray,
+    n: int = 1,
+    x_sizes: NDArray | None = None,
+    y_sizes: NDArray | None = None,
+    minlength: str | float = 'auto',
+    maxlength: str | float = 'auto',
+    return_C_l: bool = False,
+    point_reduction_factor: float = 1,
+    nbins: int = 50,
+) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
+    """
+    Calculate the correlation dimension of the Nth largest structure in an array.
+
+    Removes border-touching structures, isolates the Nth largest remaining
+    structure, crops to its bounding box, and computes the correlation dimension
+    via :func:`ensemble_correlation_dimension`.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        2-D binary array. May optionally have np.nan at borders; if not, a NaN
+        border is added internally.
+    n : int, default=1
+        Which structure to analyze, ranked by pixel count (1 = largest).
+    x_sizes : np.ndarray, optional
+        Pixel sizes in the x direction. If None, assume all pixel dimensions are 1.
+    y_sizes : np.ndarray, optional
+        Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
+    minlength : str or float, default='auto'
+        Minimum length scale for correlation calculation. If 'auto', uses 3 times
+        the minimum pixel size.
+    maxlength : str or float, default='auto'
+        Maximum length scale for correlation calculation. If 'auto', uses
+        ``0.33 * max(bbox_height, bbox_width)`` of the isolated structure in
+        physical units.
+    return_C_l : bool, default=False
+        If True, return dimension, error, bins, C_l. Otherwise, return dimension,
+        error.
+    point_reduction_factor : float, default=1
+        Draw N/point_reduction_factor circles, where N is the total number of
+        available circles. Must be >= 1.
+    nbins : int, default=50
+        Number of logarithmically spaced bins for the correlation integral.
+
+    Returns
+    -------
+    dimension : float
+        The correlation dimension.
+    error : float
+        Error estimate for the dimension (95% confidence interval).
+    bins : np.ndarray, optional
+        The bins used for calculation. Only returned if return_C_l=True.
+    C_l : np.ndarray, optional
+        The correlation integral values. Only returned if return_C_l=True.
+
+    Raises
+    ------
+    ValueError
+        If array is not 2-D, n < 1, or n exceeds the number of available
+        structures after border removal.
+    """
+    if array.ndim != 2:
+        raise ValueError('array must be 2-dimensional')
+    if n < 1:
+        raise ValueError('n must be >= 1')
+
+    # Pad with NaN border if not already present
+    if not np.any(np.isnan(array)):
+        array = np.pad(array.astype(float), pad_width=1, mode='constant',
+                       constant_values=np.nan)
+        if x_sizes is not None:
+            x_sizes = np.pad(x_sizes, pad_width=1, mode='edge')
+        if y_sizes is not None:
+            y_sizes = np.pad(y_sizes, pad_width=1, mode='edge')
+
+    # Remove border-touching structures and clean NaN
+    cleaned = remove_structures_touching_border_nan(array)
+    binary = np.nan_to_num(cleaned, nan=0.0).astype(bool)
+
+    # Isolate the Nth largest structure
+    isolated = isolate_nth_largest_structure(binary, n=n)
+
+    # Crop to bounding box
+    rows = np.any(isolated, axis=1)
+    cols = np.any(isolated, axis=0)
+    rmin, rmax = np.where(rows)[0][[0, -1]]
+    cmin, cmax = np.where(cols)[0][[0, -1]]
+    cropped = isolated[rmin:rmax + 1, cmin:cmax + 1].astype(np.float64)
+
+    # Pad with 1px of zeros to prevent toroidal wrap artifacts
+    padded = np.pad(cropped, pad_width=1, mode='constant', constant_values=0)
+
+    # Handle pixel sizes
+    if x_sizes is not None:
+        cropped_x = x_sizes[rmin:rmax + 1, cmin:cmax + 1]
+        cropped_x = np.pad(cropped_x, pad_width=1, mode='edge')
+    else:
+        cropped_x = None
+
+    if y_sizes is not None:
+        cropped_y = y_sizes[rmin:rmax + 1, cmin:cmax + 1]
+        cropped_y = np.pad(cropped_y, pad_width=1, mode='edge')
+    else:
+        cropped_y = None
+
+    # Compute maxlength from crop dimensions if auto
+    if maxlength == 'auto':
+        if cropped_x is not None and cropped_y is not None:
+            locs_x, locs_y = get_locations_from_pixel_sizes(cropped_x, cropped_y)
+            h, w = cropped_x.shape
+            phys_width = locs_x[h // 2, w - 1] - locs_x[h // 2, 0]
+            phys_height = locs_y[h - 1, w // 2] - locs_y[0, w // 2]
+            maxlength = 0.33 * max(phys_width, phys_height)
+        else:
+            crop_h, crop_w = cropped.shape
+            maxlength = 0.33 * float(max(crop_h, crop_w))
+
+    return ensemble_correlation_dimension(
+        [padded],
+        x_sizes=cropped_x,
+        y_sizes=cropped_y,
+        minlength=minlength,
+        maxlength=maxlength,
+        interior_circles_only=False,
+        return_C_l=return_C_l,
+        point_reduction_factor=point_reduction_factor,
+        nbins=nbins,
+    )
 
 
 def ensemble_box_dimension(
@@ -815,37 +947,54 @@ def total_number(
     return n_structures
 
 
-def isolate_largest_structure(
+def isolate_nth_largest_structure(
     binary_array: NDArray,
+    n: int = 1,
     structure: NDArray = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
 ) -> NDArray[np.bool_]:
     """
-    Isolate the largest connected structure in a binary array.
+    Isolate the Nth largest connected structure in a binary array.
 
     Parameters
     ----------
     binary_array : np.ndarray
         Binary input array.
+    n : int, default=1
+        Which structure to return, ranked by pixel count (1 = largest).
     structure : np.ndarray, default=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
         Connectivity structure.
 
     Returns
     -------
     np.ndarray
-        Boolean array with only the largest structure set to True.
+        Boolean array with only the Nth largest structure set to True.
 
     Raises
     ------
     ValueError
-        If ``binary_array`` contains no structures (no non-zero pixels).
+        If ``binary_array`` contains no structures or ``n`` exceeds the number
+        of structures.
     """
+    if n < 1:
+        raise ValueError('n must be >= 1')
     labelled_array = label(binary_array, structure)[0]
     cloud_values = labelled_array[labelled_array != 0]  # remove background
     if cloud_values.size == 0:
         raise ValueError('binary_array contains no structures')
     values, counts = np.unique(cloud_values, return_counts=True)
-    most_common = values[np.argmax(counts)]
-    return labelled_array == most_common
+    sorted_indices = np.argsort(counts)[::-1]
+    if n > len(values):
+        raise ValueError(f'Requested n={n} but only {len(values)} structures exist')
+    selected = values[sorted_indices[n - 1]]
+    return labelled_array == selected
+
+
+def isolate_largest_structure(*args, **kwargs):
+    """Removed. Use :func:`isolate_nth_largest_structure` instead."""
+    raise NotImplementedError(
+        'isolate_largest_structure has been renamed to '
+        'isolate_nth_largest_structure(binary_array, n=1)'
+    )
 
 
 def label_size(
