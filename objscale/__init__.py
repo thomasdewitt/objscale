@@ -60,7 +60,7 @@ __all__ = [
     'set_num_threads',
 ]
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "Thomas DeWitt"
 __email__ = "thomas.dewitt@utah.edu"
 __description__ = "Object-based analysis functions for fractal dimensions and size distributions"

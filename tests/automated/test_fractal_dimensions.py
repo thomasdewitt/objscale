@@ -398,14 +398,25 @@ def test_individual_fractal_dimension(seed='3x3_center', iterations=None, tolera
     expected_D = 1.0  # Squares have 1D (non-fractal) boundaries
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
-    dim, error = objscale.individual_fractal_dimension([fractal])
+    # Test unbinned
+    dim, error = objscale.individual_fractal_dimension([fractal], bins=None)
 
     diff = abs(dim - expected_D)
     passed = diff < tolerance
     status = "PASS" if passed else "FAIL"
-    print(f"  individual_fractal_dimension ({seed}): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
+    print(f"  individual_fractal_dimension unbinned ({seed}): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
 
-    assert passed, f"Individual dimension {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
+    assert passed, f"Individual dimension (unbinned) {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
+
+    # Test binned (default bins=30, but use 1000 for discrete-size fractals)
+    dim_b, error_b = objscale.individual_fractal_dimension([fractal], bins=1000)
+
+    diff_b = abs(dim_b - expected_D)
+    passed_b = diff_b < tolerance
+    status_b = "PASS" if passed_b else "FAIL"
+    print(f"  individual_fractal_dimension binned ({seed}): expected={expected_D:.4f}, actual={dim_b:.4f}, {status_b}")
+
+    assert passed_b, f"Individual dimension (binned) {dim_b:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
 
 
 def test_individual_correlation_dimension(tolerance=0.05):

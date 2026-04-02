@@ -580,6 +580,7 @@ def individual_fractal_dimension(
     y_sizes: NDArray | list[NDArray] | None = None,
     min_a: float = 10,
     max_a: float = np.inf,
+    bins: int | None = 30,
     return_values: bool = False
 ) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
     """
@@ -605,6 +606,10 @@ def individual_fractal_dimension(
         Minimum structure area to include in calculation.
     max_a : float, default=np.inf
         Maximum structure area to include in calculation.
+    bins : int or None, default=30
+        Number of bins along log10(sqrt(area)) for averaging. The regression
+        is performed on the bin-averaged values. If None, fit on all individual
+        points without binning.
     return_values : bool, default=False
         If True, return additional data used in the calculation.
 
@@ -615,9 +620,11 @@ def individual_fractal_dimension(
     uncertainty : float
         Uncertainty estimate (95% confidence).
     log10_sqrt_a : np.ndarray, optional
-        Log10 of sqrt(area) values. Only returned if return_values=True.
+        Log10 of sqrt(area) values (bin centers if bins is not None).
+        Only returned if return_values=True.
     log10_p : np.ndarray, optional
-        Log10 of perimeter values. Only returned if return_values=True.
+        Log10 of perimeter values (bin means if bins is not None).
+        Only returned if return_values=True.
 
     Raises
     ------
@@ -656,10 +663,25 @@ def individual_fractal_dimension(
     areas, perimeters = np.array(areas), np.array(perimeters)
     areas, perimeters = areas[(areas > min_a) & (areas < max_a)], perimeters[(areas > min_a) & (areas < max_a)]
 
-    (slope, _), (err, _) = linear_regression(np.log10(np.sqrt(areas)), np.log10(perimeters))
+    log_sqrt_a = np.log10(np.sqrt(areas))
+    log_p = np.log10(perimeters)
+
+    if bins is not None:
+        bin_edges = np.linspace(log_sqrt_a.min(), log_sqrt_a.max(), bins + 1)
+        bin_indices = np.digitize(log_sqrt_a, bin_edges) - 1
+        bin_indices = np.clip(bin_indices, 0, bins - 1)
+        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        bin_means = np.array([log_p[bin_indices == i].mean()
+                              if np.any(bin_indices == i) else np.nan
+                              for i in range(bins)])
+        valid = np.isfinite(bin_means)
+        log_sqrt_a = bin_centers[valid]
+        log_p = bin_means[valid]
+
+    (slope, _), (err, _) = linear_regression(log_sqrt_a, log_p)
 
     if return_values:
-        return slope, err, np.log10(np.sqrt(areas)), np.log10(perimeters)
+        return slope, err, log_sqrt_a, log_p
     else:
         return slope, err
 
