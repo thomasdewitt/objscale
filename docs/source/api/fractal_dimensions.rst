@@ -11,7 +11,7 @@ Functions for calculating fractal dimensions of objects and object ensembles.
 
 .. autofunction:: ensemble_box_dimension
 
-.. autofunction:: correlation_integral
+.. autofunction:: individual_correlation_dimension
 
 .. autofunction:: get_coords_of_boundaries
 

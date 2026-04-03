@@ -10,3 +10,5 @@ Utility functions for array processing and analysis.
 .. autofunction:: linear_regression
 
 .. autofunction:: encase_in_value
+
+.. autofunction:: set_num_threads

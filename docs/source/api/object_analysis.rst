@@ -7,6 +7,12 @@ Functions for analyzing and manipulating objects in binary arrays.
 
 .. autofunction:: get_structure_props
 
+.. autofunction:: get_structure_areas
+
+.. autofunction:: get_structure_perimeters
+
+.. autofunction:: get_structure_height_width
+
 .. autofunction:: get_every_boundary_perimeter
 
 .. autofunction:: total_perimeter
