@@ -121,10 +121,11 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 
 ### Object Analysis
 
-- `get_structure_areas` - Calculate areas of structures (O(n), fast)
-- `get_structure_perimeters` - Calculate perimeters of structures (O(n), fast)
-- `get_structure_height_width` - Calculate height and width of structures
-- `get_structure_props` - Calculate perimeter, area, width, height of structures (wrapper)
+- `label_structures` - Label connected components (wraps scipy.ndimage.label with NaN handling and periodic boundaries)
+- `get_structure_areas` - Calculate areas of labelled structures (O(n), fast)
+- `get_structure_perimeters` - Calculate perimeters of labelled structures (O(n), fast)
+- `get_structure_height_width` - Calculate height and width of labelled structures
+- `get_structure_props` - Calculate perimeter, area, width, height from a binary array (convenience wrapper)
 - `get_every_boundary_perimeter` - Perimeters of every boundary including nested holes
 - `total_perimeter` - Total perimeter of all objects
 - `total_number` - Count number of structures
@@ -132,7 +133,6 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 - `remove_structures_touching_border_nan` - Remove border-touching structures
 - `remove_structure_holes` - Fill holes in structures
 - `label_size` - Label each structure with its size value
-- `label_periodic_boundaries` - Merge labels across periodic boundaries
 - `clear_border_adjacent` - Clear structures touching array edges
 
 ### Utilities

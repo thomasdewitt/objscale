@@ -273,8 +273,16 @@ def test_array(name, array, expected):
     passed = 0
     failed = 0
 
-    a = objscale.get_structure_areas(array, xs, ys)
-    p = objscale.get_structure_perimeters(array, xs, ys)
+    lab, nm, nl = objscale.label_structures(array)
+    if lab is None:
+        a = np.array([], dtype=np.float32)
+        p = np.array([], dtype=np.float32)
+    else:
+        a_all = objscale.get_structure_areas(lab, nm, nl, xs, ys)
+        p_all = objscale.get_structure_perimeters(lab, nm, nl, xs, ys)
+        valid = a_all > 0
+        a = a_all[valid]
+        p = p_all[valid]
 
     if 'n_structures' in expected:
         ok = check(f"{name}/n_structures(area)", len(a), expected['n_structures'])
@@ -291,7 +299,13 @@ def test_array(name, array, expected):
         passed += ok; failed += (not ok)
 
     if 'height' in expected or 'width' in expected:
-        h, w = objscale.get_structure_height_width(array, xs, ys)
+        if lab is None:
+            h = np.array([], dtype=np.float32)
+            w = np.array([], dtype=np.float32)
+        else:
+            h_all, w_all = objscale.get_structure_height_width(lab, nm, nl, xs, ys)
+            h = h_all[valid]
+            w = w_all[valid]
         if 'height' in expected:
             ok = check(f"{name}/height", h, expected['height'])
             passed += ok; failed += (not ok)

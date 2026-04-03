@@ -54,6 +54,7 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 
 | Task | Function |
 |------|----------|
+| Label connected components | `label_structures` |
 | Get structure areas (fast, O(n)) | `get_structure_areas` |
 | Get structure perimeters (fast, O(n)) | `get_structure_perimeters` |
 | Get structure height and width | `get_structure_height_width` |
@@ -65,7 +66,6 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 | Remove border-touching objects | `remove_structures_touching_border_nan` |
 | Fill holes in objects | `remove_structure_holes` |
 | Label objects by size | `label_size` |
-| Merge periodic boundary labels | `label_periodic_boundaries` |
 | Clear border-adjacent structures | `clear_border_adjacent` |
 
 ### Utilities
@@ -108,7 +108,8 @@ objscale.individual_correlation_dimension(
     maxlength='auto',            # Max scale
     return_C_l=False,            # Return (dim, err, bins, C_l)
     point_reduction_factor=1,    # Subsample points (>=1)
-    nbins=50                     # Number of scale bins
+    nbins=50,                    # Number of scale bins
+    filled=True                  # Fill interior holes before computing (recommended)
 ) -> (dimension, error) | (dimension, error, bins, C_l)
 ```
 
@@ -120,7 +121,8 @@ objscale.individual_fractal_dimension(
     min_a=10,              # Min area to include
     max_a=np.inf,          # Max area to include
     bins=30,               # Number of bins for averaging (None = no binning)
-    return_values=False    # Return (dim, err, log10_sqrt_a, log10_p)
+    return_values=False,   # Return (dim, err, log10_sqrt_a, log10_p)
+    filled=True            # Fill interior holes before computing (recommended)
 ) -> (dimension, error) | (dimension, error, log10_sqrt_a, log10_p)
 ```
 
@@ -189,47 +191,61 @@ objscale.get_every_boundary_perimeter(
 ```
 
 ```python
-objscale.label_periodic_boundaries(
-    labelled_array,    # Output of scipy.ndimage.label()
-    wrap               # 'sides' or 'both'
-) -> np.ndarray       # Array with periodic boundary labels merged
+objscale.label_structures(
+    array,                 # 2D binary array (0s, 1s, nans)
+    structure=...,         # Connectivity (default: 4-connected)
+    wrap='both'            # 'both', 'sides', or None (periodic boundary merging)
+) -> (labelled_array, nan_mask, n_labels)  # or (None, None, 0) if empty
+# labelled_array: float32, each positive value is a label. NaN pixels are 0.
+# nan_mask: bool array of where NaN was in the input.
+# n_labels: int count of labels.
 ```
 
 ```python
+# NOTE: get_structure_areas/perimeters/height_width are lower-level functions
+# that require a pre-labelled array from label_structures(). They return
+# arrays of shape (n_labels,) indexed by label, guaranteeing alignment
+# across metrics (area[i] corresponds to perimeter[i]).
+
 objscale.get_structure_areas(
-    array,                 # Binary array (0s, 1s, nans). Assumes toroidal periodicity.
-    x_sizes,               # Pixel sizes in x (same shape as array)
+    labelled_array,        # From label_structures()
+    nan_mask,              # From label_structures()
+    n_labels,              # From label_structures()
+    x_sizes,               # Pixel sizes in x (same shape as labelled_array)
     y_sizes,               # Pixel sizes in y
-    structure=...,         # Connectivity (default: 4-connected)
-) -> np.ndarray  # 1D array of areas, one per structure. O(n) via np.bincount.
+) -> np.ndarray  # Shape (n_labels,). O(n) via np.bincount.
 ```
 
 ```python
 objscale.get_structure_perimeters(
-    array,                 # Binary array (0s, 1s, nans). Assumes toroidal periodicity.
-    x_sizes,               # Pixel sizes in x (same shape as array)
+    labelled_array,        # From label_structures()
+    nan_mask,              # From label_structures()
+    n_labels,              # From label_structures()
+    x_sizes,               # Pixel sizes in x (same shape as labelled_array)
     y_sizes,               # Pixel sizes in y
-    structure=...,         # Connectivity (default: 4-connected)
-) -> np.ndarray  # 1D array of perimeters, one per structure. O(n) parallel Numba.
+) -> np.ndarray  # Shape (n_labels,). O(n) parallel Numba.
 ```
 
 ```python
 objscale.get_structure_height_width(
-    array,                 # Binary array (0s, 1s, nans). Assumes toroidal periodicity.
-    x_sizes,               # Pixel sizes in x (same shape as array)
+    labelled_array,        # From label_structures()
+    nan_mask,              # From label_structures()
+    n_labels,              # From label_structures()
+    x_sizes,               # Pixel sizes in x (same shape as labelled_array)
     y_sizes,               # Pixel sizes in y
-    structure=...,         # Connectivity (default: 4-connected)
-) -> (heights, widths)    # Each is 1D array, one per structure
+) -> (heights, widths)    # Each shape (n_labels,)
 ```
 
 ```python
+# get_structure_props is a convenience wrapper that accepts a binary array,
+# labels internally, and returns filtered results (zero-area labels removed).
 objscale.get_structure_props(
     array,                 # Binary array (0s, 1s, nans). Assumes toroidal periodicity.
     x_sizes,               # Pixel sizes in x (same shape as array)
     y_sizes,               # Pixel sizes in y
     structure=...,         # Connectivity (default: 4-connected)
     print_none=False,      # Print message if no structures
-) -> (perimeters, areas, heights, widths)  # Wrapper calling all three above
+) -> (perimeters, areas, heights, widths)
 ```
 
 ```python

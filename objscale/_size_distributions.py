@@ -8,6 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 from warnings import warn
 from ._object_analysis import (
+    label_structures,
     remove_structures_touching_border_nan,
     get_structure_areas,
     get_structure_perimeters,
@@ -385,13 +386,20 @@ def array_size_distribution(
                                       np.full((1, y_sizes.shape[1]), np.nan)], axis=0)
         # wrap='both': fully periodic, no padding needed
 
-        if variable == 'area':
-            to_bin = get_structure_areas(array, x_sizes, y_sizes, structure)
+        lab, nm, nl = label_structures(array, structure, wrap='both')
+        if lab is None:
+            to_bin = np.array([], dtype=np.float32)
+        elif variable == 'area':
+            a = get_structure_areas(lab, nm, nl, x_sizes, y_sizes)
+            to_bin = a[a > 0]
         elif variable == 'perimeter':
-            to_bin = get_structure_perimeters(array, x_sizes, y_sizes, structure)
+            p = get_structure_perimeters(lab, nm, nl, x_sizes, y_sizes)
+            to_bin = p[p > 0]
         elif variable in ('height', 'width'):
-            h, w = get_structure_height_width(array, x_sizes, y_sizes, structure)
-            to_bin = h if variable == 'height' else w
+            h, w = get_structure_height_width(lab, nm, nl, x_sizes, y_sizes)
+            a = get_structure_areas(lab, nm, nl, x_sizes, y_sizes)
+            valid = a > 0
+            to_bin = h[valid] if variable == 'height' else w[valid]
     elif variable == 'nested perimeter':
         to_bin = get_every_boundary_perimeter(array, x_sizes, y_sizes, False)
     else:

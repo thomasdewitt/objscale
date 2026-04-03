@@ -5,6 +5,8 @@ Functions for analyzing and manipulating objects in binary arrays.
 
 .. currentmodule:: objscale
 
+.. autofunction:: label_structures
+
 .. autofunction:: get_structure_props
 
 .. autofunction:: get_structure_areas
@@ -22,8 +24,6 @@ Functions for analyzing and manipulating objects in binary arrays.
 .. autofunction:: isolate_nth_largest_structure
 
 .. autofunction:: remove_structures_touching_border_nan
-
-.. autofunction:: label_periodic_boundaries
 
 .. autofunction:: remove_structure_holes
 

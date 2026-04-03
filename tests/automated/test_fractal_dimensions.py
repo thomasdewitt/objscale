@@ -419,6 +419,66 @@ def test_individual_fractal_dimension(seed='3x3_center', iterations=None, tolera
     assert passed_b, f"Individual dimension (binned) {dim_b:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
 
 
+def test_individual_fractal_dimension_nan_surrounded(tolerance=0.01):
+    """
+    Test individual fractal dimension with NaN-surrounded structures.
+
+    Constructs a small array containing:
+    - A normal 5x5 square cloud surrounded by 0s
+    - A normal 7x7 square cloud surrounded by 0s
+    - A single-pixel cloud whose 4-connected neighbors are all NaN
+
+    The NaN-surrounded pixel has well-defined area but zero perimeter
+    (perimeter edges adjacent to NaN are excluded). This must not cause
+    an IndexError from mismatched area/perimeter array lengths.
+
+    The two normal squares have P = 4*side, A = side^2, so D = 1.
+    """
+    arr = np.full((40, 40), np.nan)
+    arr[2:-2, 2:-2] = 0
+
+    # Normal squares at various sizes (need >= 3 for regression)
+    arr[4:7, 4:7] = 1       # 3x3: A=9, P=12
+    arr[4:9, 12:17] = 1     # 5x5: A=25, P=20
+    arr[4:11, 22:29] = 1    # 7x7: A=49, P=28
+    arr[15:25, 4:14] = 1    # 10x10: A=100, P=40
+
+    # Single pixel surrounded by NaN (cross of NaN neighbors)
+    arr[30, 20] = 1
+    arr[29, 20] = np.nan
+    arr[31, 20] = np.nan
+    arr[30, 19] = np.nan
+    arr[30, 21] = np.nan
+
+    expected_D = 1.0
+
+    # Unbinned
+    dim, error = objscale.individual_fractal_dimension([arr], min_a=1, bins=None)
+
+    diff = abs(dim - expected_D)
+    passed = diff < tolerance
+    status = "PASS" if passed else "FAIL"
+    print(f"  individual_fractal_dimension_nan_surrounded (unbinned): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
+
+    assert passed, (
+        f"Individual dimension (nan-surrounded, unbinned) {dim:.4f} differs "
+        f"from expected {expected_D:.4f} by more than {tolerance}"
+    )
+
+    # Binned
+    dim_b, error_b = objscale.individual_fractal_dimension([arr], min_a=1, bins=1000)
+
+    diff_b = abs(dim_b - expected_D)
+    passed_b = diff_b < tolerance
+    status_b = "PASS" if passed_b else "FAIL"
+    print(f"  individual_fractal_dimension_nan_surrounded (binned): expected={expected_D:.4f}, actual={dim_b:.4f}, {status_b}")
+
+    assert passed_b, (
+        f"Individual dimension (nan-surrounded, binned) {dim_b:.4f} differs "
+        f"from expected {expected_D:.4f} by more than {tolerance}"
+    )
+
+
 def test_individual_correlation_dimension(tolerance=0.05):
     """
     Test individual correlation dimension on a 1D line (wide "eye" shape).
@@ -479,6 +539,22 @@ def run_all_tests():
             except Exception as e:
                 print(f"ERROR: {e}")
                 failed += 1
+
+    # Seed-independent tests
+    standalone_tests = [
+        test_individual_fractal_dimension_nan_surrounded,
+        test_individual_correlation_dimension,
+    ]
+    for test_func in standalone_tests:
+        try:
+            test_func()
+            passed += 1
+        except AssertionError as e:
+            print(f"FAILED: {e}")
+            failed += 1
+        except Exception as e:
+            print(f"ERROR: {e}")
+            failed += 1
 
     print("\n" + "=" * 60)
     print(f"SUMMARY: {passed} passed, {failed} failed")

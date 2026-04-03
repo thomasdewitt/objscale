@@ -20,13 +20,13 @@ from ._fractal_dimensions import (
 )
 
 from ._object_analysis import (
+    label_structures,
     get_structure_props,
     get_structure_areas,
     get_structure_perimeters,
     get_structure_height_width,
     get_every_boundary_perimeter,
     remove_structures_touching_border_nan,
-    label_periodic_boundaries,
     remove_structure_holes,
     clear_border_adjacent,
 )
@@ -58,7 +58,7 @@ __all__ = [
     'get_structure_height_width',
     'get_every_boundary_perimeter',
     'remove_structures_touching_border_nan',
-    'label_periodic_boundaries',
+    'label_structures',
     'remove_structure_holes',
     'clear_border_adjacent',
     'linear_regression',

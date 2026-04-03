@@ -10,29 +10,58 @@ from skimage.segmentation import clear_border
 from ._utils import encase_in_value
 
 __all__ = [
+    'label_structures',
     'get_structure_props',
     'get_structure_areas',
     'get_structure_perimeters',
     'get_structure_height_width',
-    'label_periodic_boundaries',
     'get_every_boundary_perimeter',
     'remove_structures_touching_border_nan',
     'clear_border_adjacent',
     'remove_structure_holes',
 ]
 
+DEFAULT_STRUCTURE = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+
 
 # =============================================================================
-# Shared labeling helper
+# Labeling
 # =============================================================================
 
-def _label_array(array, structure, wrap):
-    """Label connected structures, handle nans and periodic wrapping.
+def label_structures(
+    array: NDArray,
+    structure: NDArray = DEFAULT_STRUCTURE,
+    wrap: str | None = 'both',
+) -> tuple[NDArray | None, NDArray | None, int]:
+    """
+    Label connected components in a binary array.
 
-    Returns (labelled_array, nan_mask, n_labels).
-    labelled_array has 0 where input had nan (safe for integer indexing).
-    nan_mask is a boolean array indicating where nans were in the input.
-    Returns (None, None, 0) if no structures.
+    Wrapper on ``scipy.ndimage.label`` with NaN handling and optional
+    periodic boundary merging.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        2-D binary array (0s, 1s, and optionally NaN).
+    structure : np.ndarray, default=4-connectivity cross
+        Connectivity kernel passed to ``scipy.ndimage.label``.
+    wrap : str or None, default='both'
+        Periodic boundary handling:
+        - ``'both'``: merge labels across left-right and top-bottom edges.
+        - ``'sides'``: merge labels across left-right edges only.
+        - ``None``: no periodic merging.
+
+    Returns
+    -------
+    labelled_array : np.ndarray or None
+        Float32 array where each unique positive value is a connected
+        component label. Pixels that were NaN in the input are 0.
+        ``None`` if no structures exist.
+    nan_mask : np.ndarray or None
+        Boolean array indicating NaN locations in the input.
+        ``None`` if no structures exist.
+    n_labels : int
+        Number of connected components found (0 if none).
     """
     nan_mask = np.isnan(array)
     no_nans = array.copy()
@@ -41,16 +70,29 @@ def _label_array(array, structure, wrap):
         return None, None, 0
     labelled_array, n_labels = label(no_nans.astype(bool), structure, output=np.float32)
 
-    if wrap is None:
-        pass
-    elif wrap == 'both' or wrap == 'sides':
-        labelled_array = label_periodic_boundaries(labelled_array, wrap)
-    else:
-        raise ValueError(f'wrap={wrap} not supported')
+    if wrap == 'both' or wrap == 'sides':
+        labelled_array = _merge_periodic_labels(labelled_array, wrap)
+    elif wrap is not None:
+        raise ValueError(f'wrap={wrap!r} not supported')
 
-    # NaN pixels get label 0 (already the case from no_nans). Do NOT restore
-    # nans into the labeled array — callers use nan_mask where needed.
     return labelled_array, nan_mask, n_labels
+
+
+def _merge_periodic_labels(labelled_array: NDArray, wrap: str) -> NDArray:
+    """Merge labels that span periodic boundaries (internal helper)."""
+    if wrap == 'sides' or wrap == 'both':
+        for j, value in enumerate(labelled_array[:, 0]):
+            if value != 0:
+                if labelled_array[j, labelled_array.shape[1] - 1] != 0 and labelled_array[j, labelled_array.shape[1] - 1] != value:
+                    labelled_array[labelled_array == labelled_array[j, labelled_array.shape[1] - 1]] = value
+
+    if wrap == 'both':
+        for i, value in enumerate(labelled_array[0, :]):
+            if value != 0:
+                if labelled_array[labelled_array.shape[0] - 1, i] != 0 and labelled_array[labelled_array.shape[0] - 1, i] != value:
+                    labelled_array[labelled_array == labelled_array[labelled_array.shape[0] - 1, i]] = value
+
+    return labelled_array
 
 
 def _validate_inputs(array, x_sizes, y_sizes):
@@ -64,47 +106,59 @@ def _validate_inputs(array, x_sizes, y_sizes):
         raise ValueError('x or y sizes are nan in locations where array is not')
 
 
+def _validate_labelled(labelled_array):
+    """Raise TypeError if the array looks binary instead of labelled."""
+    if labelled_array.dtype == bool:
+        raise TypeError(
+            'labelled_array is boolean. '
+            'Pass a labelled array from label_structures() instead.'
+        )
+
+
 # =============================================================================
 # Area: pure numpy bincount — O(n)
 # =============================================================================
 
 def get_structure_areas(
-    array: NDArray,
+    labelled_array: NDArray,
+    nan_mask: NDArray,
+    n_labels: int,
     x_sizes: NDArray,
     y_sizes: NDArray,
-    structure: NDArray = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]),
 ) -> NDArray:
     """
-    Calculate areas of structures in a binary array.
-
-    Assumes toroidal (periodic) boundary conditions. For non-periodic domains,
-    pad edges with 0 or np.nan before calling.
+    Calculate areas of labelled structures.
 
     Parameters
     ----------
-    array : np.ndarray
-        Binary array of structures: 2-d array, padded with 0's or np.nan's.
+    labelled_array : np.ndarray
+        Labelled array from :func:`label_structures`.
+    nan_mask : np.ndarray
+        Boolean NaN mask from :func:`label_structures`.
+    n_labels : int
+        Number of labels from :func:`label_structures`.
     x_sizes : np.ndarray
-        Sizes of pixels in horizontal direction, same shape as array.
+        Pixel sizes in horizontal direction, same shape as labelled_array.
     y_sizes : np.ndarray
-        Sizes of pixels in vertical direction, same shape as array.
-    structure : np.ndarray, default=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
-        Defines connectivity.
+        Pixel sizes in vertical direction, same shape as labelled_array.
 
     Returns
     -------
     areas : np.ndarray
-        1-D array, each element the area of an individual structure.
+        1-D array of shape ``(n_labels,)`` where ``areas[i]`` is the area of
+        label ``i + 1``. Guarantees index alignment with other
+        ``get_structure_*`` functions called on the same labelled array.
     """
-    _validate_inputs(array, x_sizes, y_sizes)
-    labelled_array, nan_mask, n_labels = _label_array(array, structure, 'both')
-    if labelled_array is None:
-        return np.array([], dtype=np.float32)
+    _validate_labelled(labelled_array)
     return _compute_areas(labelled_array, x_sizes, y_sizes, n_labels)
 
 
 def _compute_areas(labelled_array, x_sizes, y_sizes, n_labels):
-    """Compute per-label areas via np.bincount."""
+    """Compute per-label areas via np.bincount.
+
+    Returns array of shape (n_labels,) — index i is label i+1.
+    Merged labels from periodic wrapping may have area 0.
+    """
     pixel_areas = (x_sizes * y_sizes).ravel()
     labels_flat = labelled_array.ravel()
     mask = labels_flat > 0
@@ -113,10 +167,7 @@ def _compute_areas(labelled_array, x_sizes, y_sizes, n_labels):
         weights=pixel_areas[mask],
         minlength=n_labels + 1,
     )
-    # Only return areas for labels that exist (skip label 0)
-    areas = areas[1:].astype(np.float32)
-    # Filter out labels with zero area (can happen with periodic wrapping merging labels)
-    return areas[areas > 0]
+    return areas[1:].astype(np.float32)
 
 
 # =============================================================================
@@ -124,41 +175,39 @@ def _compute_areas(labelled_array, x_sizes, y_sizes, n_labels):
 # =============================================================================
 
 def get_structure_perimeters(
-    array: NDArray,
+    labelled_array: NDArray,
+    nan_mask: NDArray,
+    n_labels: int,
     x_sizes: NDArray,
     y_sizes: NDArray,
-    structure: NDArray = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]),
 ) -> NDArray:
     """
-    Calculate perimeters of structures in a binary array.
+    Calculate perimeters of labelled structures.
 
-    Assumes toroidal (periodic) boundary conditions. Perimeter between a
-    structure and nan is not counted. For non-periodic domains, pad edges
-    with 0 or np.nan before calling.
+    Perimeter between a structure and NaN is not counted.
 
     Parameters
     ----------
-    array : np.ndarray
-        Binary array of structures: 2-d array, padded with 0's or np.nan's.
+    labelled_array : np.ndarray
+        Labelled array from :func:`label_structures`.
+    nan_mask : np.ndarray
+        Boolean NaN mask from :func:`label_structures`.
+    n_labels : int
+        Number of labels from :func:`label_structures`.
     x_sizes : np.ndarray
-        Sizes of pixels in horizontal direction, same shape as array.
+        Pixel sizes in horizontal direction, same shape as labelled_array.
     y_sizes : np.ndarray
-        Sizes of pixels in vertical direction, same shape as array.
-    structure : np.ndarray, default=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
-        Defines connectivity.
+        Pixel sizes in vertical direction, same shape as labelled_array.
 
     Returns
     -------
     perimeters : np.ndarray
-        1-D array, each element the perimeter of an individual structure.
+        1-D array of shape ``(n_labels,)`` where ``perimeters[i]`` is the
+        perimeter of label ``i + 1``. Guarantees index alignment with other
+        ``get_structure_*`` functions called on the same labelled array.
     """
-    _validate_inputs(array, x_sizes, y_sizes)
-    labelled_array, nan_mask, n_labels = _label_array(array, structure, 'both')
-    if labelled_array is None:
-        return np.array([], dtype=np.float32)
-    # Pass nan_mask so perimeter along nan edges is not counted
-    perimeters = _compute_perimeters(labelled_array, nan_mask, x_sizes, y_sizes, n_labels)
-    return perimeters[perimeters > 0]
+    _validate_labelled(labelled_array)
+    return _compute_perimeters(labelled_array, nan_mask, x_sizes, y_sizes, n_labels)
 
 
 @njit(parallel=True)
@@ -225,34 +274,36 @@ def _compute_perimeters(labelled_array, nan_mask, x_sizes, y_sizes, n_labels):
 # =============================================================================
 
 def get_structure_height_width(
-    array: NDArray,
+    labelled_array: NDArray,
+    nan_mask: NDArray,
+    n_labels: int,
     x_sizes: NDArray,
     y_sizes: NDArray,
-    structure: NDArray = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]),
 ) -> tuple[NDArray, NDArray]:
     """
-    Calculate heights and widths of structures in a binary array.
-
-    Assumes toroidal (periodic) boundary conditions. For non-periodic domains,
-    pad edges with 0 or np.nan before calling.
+    Calculate heights and widths of labelled structures.
 
     Parameters
     ----------
-    array : np.ndarray
-        Binary array of structures: 2-d array, padded with 0's or np.nan's.
+    labelled_array : np.ndarray
+        Labelled array from :func:`label_structures`.
+    nan_mask : np.ndarray
+        Boolean NaN mask from :func:`label_structures`.
+    n_labels : int
+        Number of labels from :func:`label_structures`.
     x_sizes : np.ndarray
-        Sizes of pixels in horizontal direction, same shape as array.
+        Pixel sizes in horizontal direction, same shape as labelled_array.
     y_sizes : np.ndarray
-        Sizes of pixels in vertical direction, same shape as array.
-    structure : np.ndarray, default=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
-        Defines connectivity.
+        Pixel sizes in vertical direction, same shape as labelled_array.
 
     Returns
     -------
     heights : np.ndarray
-        1-D array, each element the height of an individual structure.
+        1-D array of shape ``(n_labels,)`` where ``heights[i]`` is the height
+        of label ``i + 1``.
     widths : np.ndarray
-        1-D array, each element the width of an individual structure.
+        1-D array of shape ``(n_labels,)`` where ``widths[i]`` is the width
+        of label ``i + 1``.
 
     Notes
     -----
@@ -260,23 +311,29 @@ def get_structure_height_width(
     pixel widths of the pixels in the column and in the object. Similarly, the height
     will be the sum of the average pixel heights of the pixels in the row and in the object.
     """
-    _validate_inputs(array, x_sizes, y_sizes)
-    labelled_array, nan_mask, n_labels = _label_array(array, structure, 'both')
-    if labelled_array is None:
-        return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
+    _validate_labelled(labelled_array)
 
-    # Index separation needed for per-structure iteration.
-    # labelled_array has 0 where nans were (not nan), so separation is safe.
-    separated = _get_separated_structure_indices(labelled_array)
+    separated, label_ids = _get_separated_structure_indices(labelled_array)
     if len(separated) == 0:
-        return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
+        return np.zeros(n_labels, dtype=np.float32), np.zeros(n_labels, dtype=np.float32)
 
-    h, w = _compute_height_width(labelled_array, List(separated), x_sizes, y_sizes)
-    return np.array(h, dtype=np.float32), np.array(w, dtype=np.float32)
+    h_sparse, w_sparse = _compute_height_width(labelled_array, List(separated), x_sizes, y_sizes)
+
+    # Map sparse results back to label-indexed arrays
+    heights = np.zeros(n_labels, dtype=np.float32)
+    widths = np.zeros(n_labels, dtype=np.float32)
+    for k, lab in enumerate(label_ids):
+        heights[lab - 1] = h_sparse[k]
+        widths[lab - 1] = w_sparse[k]
+    return heights, widths
 
 
 def _get_separated_structure_indices(labelled_array):
-    """Get list of 2D index arrays, one per structure label."""
+    """Get list of 2D index arrays, one per structure label.
+
+    Returns (separated, label_ids) where label_ids[k] is the label value
+    for separated[k].
+    """
     values = np.sort(labelled_array.flatten())
     original_locations = np.argsort(labelled_array.flatten())
     indices_2d = np.array(np.unravel_index(original_locations, labelled_array.shape)).T
@@ -284,9 +341,14 @@ def _get_separated_structure_indices(labelled_array):
     split_here = np.roll(values, shift=-1) - values
     split_here[-1] = 0
 
-    separated = np.split(indices_2d, np.where(split_here != 0)[0] + 1)
+    split_points = np.where(split_here != 0)[0] + 1
+    separated = np.split(indices_2d, split_points)
     separated = separated[1:]  # Remove label 0
-    return separated
+
+    # Extract the label id for each group
+    unique_labels = np.unique(values)
+    label_ids = unique_labels[unique_labels > 0].astype(int)
+    return separated, label_ids
 
 
 @njit(parallel=True)
@@ -330,9 +392,7 @@ def _compute_height_width(labelled_array, separated_structure_indices, x_sizes, 
         h[iteration] = height
         w[iteration] = width
 
-    # Filter out zero-area structures (shouldn't happen, but be safe)
-    valid = (h > 0) | (w > 0)
-    return h[valid], w[valid]
+    return h, w
 
 
 # =============================================================================
@@ -394,66 +454,21 @@ def get_structure_props(
     get_structure_height_width.
     """
     _validate_inputs(array, x_sizes, y_sizes)
-    labelled_array, nan_mask, n_labels = _label_array(array, structure, 'both')
+    labelled_array, nan_mask, n_labels = label_structures(array, structure, wrap='both')
     if labelled_array is None:
         if print_none:
             print('No structures found')
         return np.array([]), np.array([]), np.array([]), np.array([])
 
-    a = _compute_areas(labelled_array, x_sizes, y_sizes, n_labels)
-    p_all = _compute_perimeters(labelled_array, nan_mask, x_sizes, y_sizes, n_labels)
-    # Filter perimeters to match areas (both skip zero-area labels from merged wrapping)
-    p = p_all[p_all > 0]
+    a = get_structure_areas(labelled_array, nan_mask, n_labels, x_sizes, y_sizes)
+    p = get_structure_perimeters(labelled_array, nan_mask, n_labels, x_sizes, y_sizes)
+    h, w = get_structure_height_width(labelled_array, nan_mask, n_labels, x_sizes, y_sizes)
 
-    separated = _get_separated_structure_indices(labelled_array)
-    if len(separated) == 0:
-        return np.array([]), np.array([]), np.array([]), np.array([])
-    h, w = _compute_height_width(labelled_array, List(separated), x_sizes, y_sizes)
-
-    return p, a, np.array(h, dtype=np.float32), np.array(w, dtype=np.float32)
+    # Filter out labels with zero area (from periodic wrapping merging labels)
+    valid = a > 0
+    return p[valid], a[valid], h[valid], w[valid]
 
 
-def label_periodic_boundaries(labelled_array: NDArray, wrap: str) -> NDArray:
-    """
-    Make labelled structures that span a periodic boundary have the same label.
-
-    Parameters
-    ----------
-    labelled_array : np.ndarray
-        A 2D array where each unique non-zero element represents a distinct label.
-        Should be the output of scipy.ndimage.label().
-    wrap : str
-        Determines how the boundaries of the array should be wrapped.
-        'sides': Sets labels on the right boundary to match those on the left.
-        'both': Also sets labels on the top boundary to match those on the bottom.
-
-    Returns
-    -------
-    np.ndarray
-        The input array with periodic boundaries labelled according to the wrap parameter.
-
-    Raises
-    ------
-    ValueError
-        If wrap is neither 'sides' nor 'both'.
-    """
-    if wrap == 'sides' or wrap == 'both':
-        # set those on right to the same i.d. as those on left
-        for j, value in enumerate(labelled_array[:, 0]):
-            if value != 0:
-                if labelled_array[j, labelled_array.shape[1] - 1] != 0 and labelled_array[j, labelled_array.shape[1] - 1] != value:
-                    labelled_array[labelled_array == labelled_array[j, labelled_array.shape[1] - 1]] = value
-
-    if wrap == 'both':
-        # set those on top to the same i.d. as those on bottom
-        for i, value in enumerate(labelled_array[0, :]):
-            if value != 0:
-                if labelled_array[labelled_array.shape[0] - 1, i] != 0 and labelled_array[labelled_array.shape[0] - 1, i] != value:
-                    labelled_array[labelled_array == labelled_array[labelled_array.shape[0] - 1, i]] = value
-
-    if wrap not in ['sides', 'both']:
-        raise ValueError(f'wrap = {wrap} not supported')
-    return labelled_array
 
 
 def get_every_boundary_perimeter(
@@ -499,8 +514,13 @@ def get_every_boundary_perimeter(
         if counter > 100:
             raise ValueError('Hole layer limit reached: 100 layers')
         all_holes_filled = remove_structure_holes(array)
-        exterior_perimeters = get_structure_perimeters(encase_in_value(all_holes_filled), encase_in_value(x_sizes), encase_in_value(y_sizes))
-        perimeters.extend(exterior_perimeters)
+        encased = encase_in_value(all_holes_filled)
+        enc_xs = encase_in_value(x_sizes)
+        enc_ys = encase_in_value(y_sizes)
+        lab, nm, nl = label_structures(encased, wrap='both')
+        if lab is not None:
+            p = get_structure_perimeters(lab, nm, nl, enc_xs, enc_ys)
+            perimeters.extend(p[p > 0])
 
         # remove one layer
         new_array = all_holes_filled - array
@@ -625,7 +645,7 @@ def remove_structure_holes(
     # invert and label
     labelled, _ = label((1 - filled))
     if periodic is not False:
-        labelled = label_periodic_boundaries(labelled, periodic)
+        labelled = _merge_periodic_labels(labelled, periodic)
     # largest structure will be the background or the cloudy areas.
     unique_values, unique_counts = np.unique(labelled.flatten(), return_counts=True)
     # Make sure we don't identify the cloudy areas as the background.

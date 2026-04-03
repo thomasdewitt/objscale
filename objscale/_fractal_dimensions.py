@@ -7,11 +7,12 @@ from numba.typed import List
 from scipy.ndimage import label
 from warnings import warn
 from ._object_analysis import (
+    label_structures,
+    _merge_periodic_labels,
     remove_structures_touching_border_nan,
     remove_structure_holes,
     get_structure_areas,
     get_structure_perimeters,
-    label_periodic_boundaries,
 )
 from ._utils import linear_regression, encase_in_value
 
@@ -233,6 +234,7 @@ def individual_correlation_dimension(
     return_C_l: bool = False,
     point_reduction_factor: float = 1,
     nbins: int = 50,
+    filled: bool = True,
 ) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
     """
     Calculate the correlation dimension of the Nth largest structure in an array.
@@ -262,6 +264,10 @@ def individual_correlation_dimension(
     return_C_l : bool, default=False
         If True, return dimension, error, bins, C_l. Otherwise, return dimension,
         error.
+    filled : bool, default=True
+        If True, fill interior holes in the isolated structure before computing
+        the correlation dimension, so that only the outer boundary contributes.
+        If False, holes are left as-is and interior boundaries are included.
     point_reduction_factor : float, default=1
         Draw N/point_reduction_factor circles, where N is the total number of
         available circles. Must be >= 1.
@@ -305,6 +311,10 @@ def individual_correlation_dimension(
 
     # Isolate the Nth largest structure
     isolated = isolate_nth_largest_structure(binary, n=n)
+
+    # Optionally fill interior holes so only the outer boundary contributes
+    if filled:
+        isolated = remove_structure_holes(isolated.astype(float)).astype(bool)
 
     # Crop to bounding box
     rows = np.any(isolated, axis=1)
@@ -582,7 +592,8 @@ def individual_fractal_dimension(
     min_a: float = 10,
     max_a: float = np.inf,
     bins: int | None = 30,
-    return_values: bool = False
+    return_values: bool = False,
+    filled: bool = True,
 ) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
     """
     Calculate the individual fractal dimension Df of objects within arrays.
@@ -613,6 +624,10 @@ def individual_fractal_dimension(
         points without binning.
     return_values : bool, default=False
         If True, return additional data used in the calculation.
+    filled : bool, default=True
+        If True, fill interior holes in structures before computing areas and
+        perimeters. If False, holes are left as-is, so perimeters include
+        interior boundaries and areas exclude hole pixels.
 
     Returns
     -------
@@ -656,14 +671,21 @@ def individual_fractal_dimension(
             raise ValueError('Each array shape must match corresponding pixel sizes shape')
 
         array = remove_structures_touching_border_nan(array)
-        array = remove_structure_holes(array)
-        new_a = get_structure_areas(array, xs, ys)
-        new_p = get_structure_perimeters(array, xs, ys)
-        areas.extend(new_a)
-        perimeters.extend(new_p)
+        if filled:
+            array = remove_structure_holes(array)
+        lab, nm, nl = label_structures(array, wrap='both')
+        if lab is None:
+            continue
+        new_a = get_structure_areas(lab, nm, nl, xs, ys)
+        new_p = get_structure_perimeters(lab, nm, nl, xs, ys)
+        # Filter out labels with zero area or zero perimeter (e.g. NaN-surrounded)
+        valid = (new_a > 0) & (new_p > 0)
+        areas.extend(new_a[valid])
+        perimeters.extend(new_p[valid])
 
     areas, perimeters = np.array(areas), np.array(perimeters)
-    areas, perimeters = areas[(areas > min_a) & (areas < max_a)], perimeters[(areas > min_a) & (areas < max_a)]
+    mask = (areas > min_a) & (areas < max_a)
+    areas, perimeters = areas[mask], perimeters[mask]
 
     log_sqrt_a = np.log10(np.sqrt(areas))
     log_p = np.log10(perimeters)
@@ -1088,7 +1110,7 @@ def label_size(
     if wrap is None:
         pass
     elif wrap == 'both' or wrap == 'sides':
-        labelled_array = label_periodic_boundaries(labelled_array, wrap)
+        labelled_array = _merge_periodic_labels(labelled_array, wrap)
     else:
         raise ValueError(f'wrap={wrap} not supported')
 
