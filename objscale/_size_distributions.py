@@ -9,7 +9,6 @@ from numpy.typing import NDArray
 from warnings import warn
 from ._object_analysis import (
     remove_structures_touching_border_nan,
-    get_structure_props,
     get_structure_areas,
     get_structure_perimeters,
     get_structure_height_width,
@@ -397,6 +396,13 @@ def array_size_distribution(
         to_bin = get_every_boundary_perimeter(array, x_sizes, y_sizes, False)
     else:
         raise ValueError(f'Unsupported variable: {variable}')
+
+    if len(to_bin) == 0:
+        if isinstance(bins, int):
+            return np.zeros(bins), np.zeros(bins)
+        else:
+            bin_middles = bins[:-1] + 0.5 * (bins[1] - bins[0])
+            return bin_middles, np.zeros(len(bins) - 1)
 
     if bin_logs:
         to_bin = np.log10(to_bin)

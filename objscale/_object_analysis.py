@@ -6,7 +6,6 @@ from scipy.ndimage import label
 import numba
 from numba import njit, prange
 from numba.typed import List
-from warnings import warn
 from skimage.segmentation import clear_border
 from ._utils import encase_in_value
 

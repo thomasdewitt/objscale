@@ -9,7 +9,6 @@ from warnings import warn
 from ._object_analysis import (
     remove_structures_touching_border_nan,
     remove_structure_holes,
-    get_structure_props,
     get_structure_areas,
     get_structure_perimeters,
     label_periodic_boundaries,
@@ -1066,7 +1065,8 @@ def label_size(
     pixel widths of the pixels in the column and in the object. Similarly, the height
     will be the sum of the average pixel heights of the pixels in the row and in the object.
     """
-    labelled_array, n_structures = label(array.astype(bool), output=np.float32)
+    binary = np.where(np.isnan(array), 0, array).astype(bool)
+    labelled_array, n_structures = label(binary, output=np.float32)
 
     if variable not in ['area', 'perimeter', 'width', 'height']:
         raise ValueError(f'variable={variable} not supported (supported values are "area", "perimeter", "width", "height")')
@@ -1106,7 +1106,7 @@ def label_size(
     if len(separated_structure_indices) == 0:
         return np.zeros(array.shape, dtype=int)
 
-    labelled_with_sizes = np.zeros(array.shape, dtype=int)
+    labelled_with_sizes = np.zeros(array.shape, dtype=np.float32)
 
     # must use numba.typed.List here for Numba compatibility
     # https://numba.readthedocs.io/en/stable/reference/pysupported.html#feature-typed-list
