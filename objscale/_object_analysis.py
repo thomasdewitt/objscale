@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 from scipy.ndimage import label
+import numba
 from numba import njit, prange
 from numba.typed import List
 from warnings import warn
@@ -11,6 +12,9 @@ from ._utils import encase_in_value
 
 __all__ = [
     'get_structure_props',
+    'get_structure_areas',
+    'get_structure_perimeters',
+    'get_structure_height_width',
     'label_periodic_boundaries',
     'get_every_boundary_perimeter',
     'remove_structures_touching_border_nan',
@@ -19,19 +23,63 @@ __all__ = [
 ]
 
 
-def get_structure_props(
+# =============================================================================
+# Shared labeling helper
+# =============================================================================
+
+def _label_array(array, structure, wrap):
+    """Label connected structures, handle nans and periodic wrapping.
+
+    Returns (labelled_array, nan_mask, n_labels).
+    labelled_array has 0 where input had nan (safe for integer indexing).
+    nan_mask is a boolean array indicating where nans were in the input.
+    Returns (None, None, 0) if no structures.
+    """
+    nan_mask = np.isnan(array)
+    no_nans = array.copy()
+    no_nans[nan_mask] = 0
+    if np.count_nonzero(no_nans) == 0:
+        return None, None, 0
+    labelled_array, n_labels = label(no_nans.astype(bool), structure, output=np.float32)
+
+    if wrap is None:
+        pass
+    elif wrap == 'both' or wrap == 'sides':
+        labelled_array = label_periodic_boundaries(labelled_array, wrap)
+    else:
+        raise ValueError(f'wrap={wrap} not supported')
+
+    # NaN pixels get label 0 (already the case from no_nans). Do NOT restore
+    # nans into the labeled array — callers use nan_mask where needed.
+    return labelled_array, nan_mask, n_labels
+
+
+def _validate_inputs(array, x_sizes, y_sizes):
+    """Validate that array, x_sizes, y_sizes have matching shapes and no bad nans."""
+    if array.shape != x_sizes.shape or array.shape != y_sizes.shape:
+        raise ValueError(
+            f'array, x_sizes, and y_sizes must all be same shape. '
+            f'Currently {array.shape},{x_sizes.shape},{y_sizes.shape}'
+        )
+    if np.count_nonzero((np.isnan(x_sizes) | np.isnan(y_sizes)) & np.isfinite(array)):
+        raise ValueError('x or y sizes are nan in locations where array is not')
+
+
+# =============================================================================
+# Area: pure numpy bincount — O(n)
+# =============================================================================
+
+def get_structure_areas(
     array: NDArray,
     x_sizes: NDArray,
     y_sizes: NDArray,
     structure: NDArray = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]),
-    print_none: bool = False,
-    wrap: str | None = None
-) -> tuple[NDArray, NDArray, NDArray, NDArray]:
+) -> NDArray:
     """
-    Calculate properties of structures in a binary array.
+    Calculate areas of structures in a binary array.
 
-    Given an array and the sizes of each pixel in each direction, calculate
-    properties of structures. Any perimeter between structure and nan is not counted.
+    Assumes toroidal (periodic) boundary conditions. For non-periodic domains,
+    pad edges with 0 or np.nan before calling.
 
     Parameters
     ----------
@@ -43,30 +91,169 @@ def get_structure_props(
         Sizes of pixels in vertical direction, same shape as array.
     structure : np.ndarray, default=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
         Defines connectivity.
-    print_none : bool, default=False
-        Print message if no structures found.
-    wrap : str or None, default=None
-        Boundary wrapping options: None, 'sides', 'both'.
-        If 'sides', connect structures that span the left/right edge.
-        If 'both', connect structures that span the left/right edge and top/bottom edge.
 
     Returns
     -------
-    perimeter : np.ndarray
-        1-D array, each element the perimeter of an individual structure.
-    area : np.ndarray
+    areas : np.ndarray
         1-D array, each element the area of an individual structure.
-    height : np.ndarray
-        1-D array, each element the height of an individual structure.
-    width : np.ndarray
-        1-D array, each element the width of an individual structure.
+    """
+    _validate_inputs(array, x_sizes, y_sizes)
+    labelled_array, nan_mask, n_labels = _label_array(array, structure, 'both')
+    if labelled_array is None:
+        return np.array([], dtype=np.float32)
+    return _compute_areas(labelled_array, x_sizes, y_sizes, n_labels)
 
-    Raises
-    ------
-    ValueError
-        If array, x_sizes, and y_sizes are not the same shape.
-        If x or y sizes are nan where array is not nan.
-        If wrap is not None, 'sides', or 'both'.
+
+def _compute_areas(labelled_array, x_sizes, y_sizes, n_labels):
+    """Compute per-label areas via np.bincount."""
+    pixel_areas = (x_sizes * y_sizes).ravel()
+    labels_flat = labelled_array.ravel()
+    mask = labels_flat > 0
+    areas = np.bincount(
+        labels_flat[mask].astype(np.intp),
+        weights=pixel_areas[mask],
+        minlength=n_labels + 1,
+    )
+    # Only return areas for labels that exist (skip label 0)
+    areas = areas[1:].astype(np.float32)
+    # Filter out labels with zero area (can happen with periodic wrapping merging labels)
+    return areas[areas > 0]
+
+
+# =============================================================================
+# Perimeter: Numba parallel row-chunked — O(n)
+# =============================================================================
+
+def get_structure_perimeters(
+    array: NDArray,
+    x_sizes: NDArray,
+    y_sizes: NDArray,
+    structure: NDArray = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]),
+) -> NDArray:
+    """
+    Calculate perimeters of structures in a binary array.
+
+    Assumes toroidal (periodic) boundary conditions. Perimeter between a
+    structure and nan is not counted. For non-periodic domains, pad edges
+    with 0 or np.nan before calling.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        Binary array of structures: 2-d array, padded with 0's or np.nan's.
+    x_sizes : np.ndarray
+        Sizes of pixels in horizontal direction, same shape as array.
+    y_sizes : np.ndarray
+        Sizes of pixels in vertical direction, same shape as array.
+    structure : np.ndarray, default=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+        Defines connectivity.
+
+    Returns
+    -------
+    perimeters : np.ndarray
+        1-D array, each element the perimeter of an individual structure.
+    """
+    _validate_inputs(array, x_sizes, y_sizes)
+    labelled_array, nan_mask, n_labels = _label_array(array, structure, 'both')
+    if labelled_array is None:
+        return np.array([], dtype=np.float32)
+    # Pass nan_mask so perimeter along nan edges is not counted
+    perimeters = _compute_perimeters(labelled_array, nan_mask, x_sizes, y_sizes, n_labels)
+    return perimeters[perimeters > 0]
+
+
+@njit(parallel=True)
+def _compute_perimeters(labelled_array, nan_mask, x_sizes, y_sizes, n_labels):
+    """Compute per-label perimeters via parallel row-chunked scan.
+
+    Only counts edges where a structure pixel neighbors a 0 (background).
+    Edges adjacent to NaN (outside domain) are not counted as perimeter.
+    """
+    nrows, ncols = labelled_array.shape
+    n_pixels = nrows * ncols
+
+    # Memory guard: per-thread buffers are n_threads × (n_labels+1) floats.
+    # Cap n_threads so total buffer stays under 4× array size.
+    n_threads = numba.config.NUMBA_NUM_THREADS
+    max_threads = max(1, (4 * n_pixels) // (n_labels + 1))
+    n_threads = min(n_threads, max_threads)
+
+    chunk_size = (nrows + n_threads - 1) // n_threads
+    local_p = np.zeros((n_threads, n_labels + 1), dtype=np.float32)
+
+    for t in prange(n_threads):
+        start = t * chunk_size
+        end = min(start + chunk_size, nrows)
+        for i in range(start, end):
+            for j in range(ncols):
+                lab = labelled_array[i, j]
+                if lab <= 0:
+                    continue
+                lab_int = np.intp(lab)
+
+                # Down neighbor: count if neighbor is 0 and not nan
+                ni = i + 1 if i < nrows - 1 else 0
+                if labelled_array[ni, j] == 0 and not nan_mask[ni, j]:
+                    local_p[t, lab_int] += x_sizes[i, j]
+
+                # Up neighbor
+                ni = i - 1 if i > 0 else nrows - 1
+                if labelled_array[ni, j] == 0 and not nan_mask[ni, j]:
+                    local_p[t, lab_int] += x_sizes[i, j]
+
+                # Right neighbor
+                nj = j + 1 if j < ncols - 1 else 0
+                if labelled_array[i, nj] == 0 and not nan_mask[i, nj]:
+                    local_p[t, lab_int] += y_sizes[i, j]
+
+                # Left neighbor
+                nj = j - 1 if j > 0 else ncols - 1
+                if labelled_array[i, nj] == 0 and not nan_mask[i, nj]:
+                    local_p[t, lab_int] += y_sizes[i, j]
+
+    # Sum across threads
+    perimeters = np.zeros(n_labels + 1, dtype=np.float32)
+    for t in range(n_threads):
+        for lab in range(n_labels + 1):
+            perimeters[lab] += local_p[t, lab]
+
+    # Skip label 0
+    return perimeters[1:]
+
+
+# =============================================================================
+# Height/width: existing per-structure parallel loop
+# =============================================================================
+
+def get_structure_height_width(
+    array: NDArray,
+    x_sizes: NDArray,
+    y_sizes: NDArray,
+    structure: NDArray = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]),
+) -> tuple[NDArray, NDArray]:
+    """
+    Calculate heights and widths of structures in a binary array.
+
+    Assumes toroidal (periodic) boundary conditions. For non-periodic domains,
+    pad edges with 0 or np.nan before calling.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        Binary array of structures: 2-d array, padded with 0's or np.nan's.
+    x_sizes : np.ndarray
+        Sizes of pixels in horizontal direction, same shape as array.
+    y_sizes : np.ndarray
+        Sizes of pixels in vertical direction, same shape as array.
+    structure : np.ndarray, default=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+        Defines connectivity.
+
+    Returns
+    -------
+    heights : np.ndarray
+        1-D array, each element the height of an individual structure.
+    widths : np.ndarray
+        1-D array, each element the width of an individual structure.
 
     Notes
     -----
@@ -74,76 +261,54 @@ def get_structure_props(
     pixel widths of the pixels in the column and in the object. Similarly, the height
     will be the sum of the average pixel heights of the pixels in the row and in the object.
     """
-    if array.shape != x_sizes.shape or array.shape != y_sizes.shape:
-        raise ValueError(f'array, x_sizes, and y_sizes must all be same shape. Currently {array.shape},{x_sizes.shape},{y_sizes.shape}')
+    _validate_inputs(array, x_sizes, y_sizes)
+    labelled_array, nan_mask, n_labels = _label_array(array, structure, 'both')
+    if labelled_array is None:
+        return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
 
-    if np.count_nonzero((np.isnan(x_sizes) | np.isnan(y_sizes)) & np.isfinite(array)):
-        raise ValueError('x or y sizes are nan in locations where array is not')
+    # Index separation needed for per-structure iteration.
+    # labelled_array has 0 where nans were (not nan), so separation is safe.
+    separated = _get_separated_structure_indices(labelled_array)
+    if len(separated) == 0:
+        return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
 
-    no_nans = array.copy()
-    no_nans[np.isnan(array)] = 0   # so we don't consider nans structures and also so they don't connect multiple structures
-    if np.count_nonzero(no_nans) == 0:
-        if print_none:
-            print('No structures found')
-        return np.array([]), np.array([]), np.array([]), np.array([])
-    labelled_array, n_structures = label(no_nans.astype(bool), structure, output=np.float32)
+    h, w = _compute_height_width(labelled_array, List(separated), x_sizes, y_sizes)
+    return np.array(h, dtype=np.float32), np.array(w, dtype=np.float32)
 
-    if wrap is None:
-        pass
-    elif wrap == 'both' or wrap == 'sides':
-        labelled_array = label_periodic_boundaries(labelled_array, wrap)
-    else:
-        raise ValueError(f'wrap={wrap} not supported')
 
-    # Flatten arrays to find their indices.
+def _get_separated_structure_indices(labelled_array):
+    """Get list of 2D index arrays, one per structure label."""
     values = np.sort(labelled_array.flatten())
     original_locations = np.argsort(labelled_array.flatten())
     indices_2d = np.array(np.unravel_index(original_locations, labelled_array.shape)).T
 
-    labelled_array[np.isnan(array)] = np.nan  # Turn this back to nan so perimeter along it is not included
-    split_here = np.roll(values, shift=-1) - values  # Split where the values changed.
-    split_here[-1] = 0  # Last value rolled over from first
+    split_here = np.roll(values, shift=-1) - values
+    split_here[-1] = 0
 
-    separated_structure_indices = np.split(indices_2d, np.where(split_here != 0)[0] + 1)
-    separated_structure_indices = separated_structure_indices[1:]  # Remove the locations that were 0 (not structure)
-    if len(separated_structure_indices) == 0:
-        return np.array([]), np.array([]), np.array([]), np.array([])
-
-    # must use numba.typed.List here for Numba compatibility
-    # https://numba.readthedocs.io/en/stable/reference/pysupported.html#feature-typed-list
-    p, a, h, w = _get_structure_props_helper(labelled_array, List(separated_structure_indices), x_sizes, y_sizes)
-    nanmask = np.logical_or(np.logical_or(np.isnan(p), np.isnan(a)), np.logical_or(np.isnan(h), np.isnan(w)))
-    if np.count_nonzero(nanmask) > 0:
-        raise ValueError(f'Nan values found: {np.count_nonzero(nanmask)} out of {len(p)}')
-    p, a, h, w = np.array(p), np.array(a), np.array(h), np.array(w)
-    p, a, h, w = p[~nanmask], a[~nanmask], h[~nanmask], w[~nanmask]
-    return p, a, h, w
+    separated = np.split(indices_2d, np.where(split_here != 0)[0] + 1)
+    separated = separated[1:]  # Remove label 0
+    return separated
 
 
 @njit(parallel=True)
-def _get_structure_props_helper(labelled_array, separated_structure_indices, x_sizes, y_sizes):
-    # Preallocate arrays
+def _compute_height_width(labelled_array, separated_structure_indices, x_sizes, y_sizes):
+    """Compute height and width per structure via per-structure parallel loop."""
     n_structures = len(separated_structure_indices)
-    p = np.empty(n_structures, dtype=np.float32)
-    a = np.empty(n_structures, dtype=np.float32)
     h = np.empty(n_structures, dtype=np.float32)
     w = np.empty(n_structures, dtype=np.float32)
 
-    for iteration in prange(len(separated_structure_indices)):
+    for iteration in prange(n_structures):
         iteration = np.int64(iteration)
         structure_coords = separated_structure_indices[iteration]
-        perimeter = 0
-        area = 0
 
         y_coords_structure = np.array([c[0] for c in structure_coords])
         x_coords_structure = np.array([c[1] for c in structure_coords])
         unique_y_coords = []
         unique_x_coords = []
-        height = 0
-        width = 0
+        height = 0.0
+        width = 0.0
 
         for i, j in structure_coords:
-            # Height, Width
             if i not in unique_y_coords:
                 unique_y_coords.append(i)
                 indices = (y_coords_structure == i)
@@ -163,39 +328,90 @@ def _get_structure_props_helper(labelled_array, separated_structure_indices, x_s
                 x_sizes_here = np.array(x_sizes_here)
                 width += np.mean(x_sizes_here)
 
-            # Perimeter:
-            if i != labelled_array.shape[0] - 1 and labelled_array[i + 1, j] == 0:
-                perimeter += x_sizes[i, j]
-            elif i == labelled_array.shape[0] - 1 and labelled_array[0, j] == 0:
-                perimeter += x_sizes[i, j]
+        h[iteration] = height
+        w[iteration] = width
 
-            if i != 0 and labelled_array[i - 1, j] == 0:
-                perimeter += x_sizes[i, j]
-            elif i == 0 and labelled_array[labelled_array.shape[0] - 1, j] == 0:
-                perimeter += x_sizes[i, j]
+    # Filter out zero-area structures (shouldn't happen, but be safe)
+    valid = (h > 0) | (w > 0)
+    return h[valid], w[valid]
 
-            if j != labelled_array.shape[1] - 1 and labelled_array[i, j + 1] == 0:
-                perimeter += y_sizes[i, j]
-            elif j == labelled_array.shape[1] - 1 and labelled_array[i, 0] == 0:
-                perimeter += y_sizes[i, j]
 
-            if j != 0 and labelled_array[i, j - 1] == 0:
-                perimeter += y_sizes[i, j]
-            elif j == 0 and labelled_array[i, labelled_array.shape[1] - 1] == 0:
-                perimeter += y_sizes[i, j]
+# =============================================================================
+# Backward-compatible wrapper
+# =============================================================================
 
-            # Area:
-            area += y_sizes[i, j] * x_sizes[i, j]
+def get_structure_props(
+    array: NDArray,
+    x_sizes: NDArray,
+    y_sizes: NDArray,
+    structure: NDArray = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]),
+    print_none: bool = False,
+) -> tuple[NDArray, NDArray, NDArray, NDArray]:
+    """
+    Calculate properties of structures in a binary array.
 
-        if area != 0:
-            p[iteration] = perimeter
-            a[iteration] = area
-            h[iteration] = height
-            w[iteration] = width
+    Assumes toroidal (periodic) boundary conditions. For non-periodic domains,
+    pad edges with 0 or np.nan before calling. Any perimeter between structure
+    and nan is not counted.
 
-    # Return only the valid entries
-    valid_mask = (a > 0)
-    return p[valid_mask], a[valid_mask], h[valid_mask], w[valid_mask]
+    Parameters
+    ----------
+    array : np.ndarray
+        Binary array of structures: 2-d array, padded with 0's or np.nan's.
+    x_sizes : np.ndarray
+        Sizes of pixels in horizontal direction, same shape as array.
+    y_sizes : np.ndarray
+        Sizes of pixels in vertical direction, same shape as array.
+    structure : np.ndarray, default=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+        Defines connectivity.
+    print_none : bool, default=False
+        Print message if no structures found.
+
+    Returns
+    -------
+    perimeter : np.ndarray
+        1-D array, each element the perimeter of an individual structure.
+    area : np.ndarray
+        1-D array, each element the area of an individual structure.
+    height : np.ndarray
+        1-D array, each element the height of an individual structure.
+    width : np.ndarray
+        1-D array, each element the width of an individual structure.
+
+    Raises
+    ------
+    ValueError
+        If array, x_sizes, and y_sizes are not the same shape.
+        If x or y sizes are nan where array is not nan.
+
+    Notes
+    -----
+    If x_sizes or y_sizes are not uniform, the width will be the sum of the average
+    pixel widths of the pixels in the column and in the object. Similarly, the height
+    will be the sum of the average pixel heights of the pixels in the row and in the object.
+
+    For better performance when only a subset of properties is needed, use the
+    individual functions: get_structure_areas, get_structure_perimeters,
+    get_structure_height_width.
+    """
+    _validate_inputs(array, x_sizes, y_sizes)
+    labelled_array, nan_mask, n_labels = _label_array(array, structure, 'both')
+    if labelled_array is None:
+        if print_none:
+            print('No structures found')
+        return np.array([]), np.array([]), np.array([]), np.array([])
+
+    a = _compute_areas(labelled_array, x_sizes, y_sizes, n_labels)
+    p_all = _compute_perimeters(labelled_array, nan_mask, x_sizes, y_sizes, n_labels)
+    # Filter perimeters to match areas (both skip zero-area labels from merged wrapping)
+    p = p_all[p_all > 0]
+
+    separated = _get_separated_structure_indices(labelled_array)
+    if len(separated) == 0:
+        return np.array([]), np.array([]), np.array([]), np.array([])
+    h, w = _compute_height_width(labelled_array, List(separated), x_sizes, y_sizes)
+
+    return p, a, np.array(h, dtype=np.float32), np.array(w, dtype=np.float32)
 
 
 def label_periodic_boundaries(labelled_array: NDArray, wrap: str) -> NDArray:
@@ -284,7 +500,7 @@ def get_every_boundary_perimeter(
         if counter > 100:
             raise ValueError('Hole layer limit reached: 100 layers')
         all_holes_filled = remove_structure_holes(array)
-        exterior_perimeters, _, _, _ = get_structure_props(encase_in_value(all_holes_filled), encase_in_value(x_sizes), encase_in_value(y_sizes))
+        exterior_perimeters = get_structure_perimeters(encase_in_value(all_holes_filled), encase_in_value(x_sizes), encase_in_value(y_sizes))
         perimeters.extend(exterior_perimeters)
 
         # remove one layer

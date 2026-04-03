@@ -7,7 +7,14 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 from warnings import warn
-from ._object_analysis import remove_structures_touching_border_nan, get_structure_props, get_every_boundary_perimeter
+from ._object_analysis import (
+    remove_structures_touching_border_nan,
+    get_structure_props,
+    get_structure_areas,
+    get_structure_perimeters,
+    get_structure_height_width,
+    get_every_boundary_perimeter,
+)
 from ._utils import linear_regression, encase_in_value
 
 __all__ = [
@@ -362,16 +369,30 @@ def array_size_distribution(
         x_sizes = np.ones(array.shape, dtype=np.float32)
     if y_sizes is None:
         y_sizes = np.ones(array.shape, dtype=np.float32)
-    if variable in ['area', 'perimeter', 'height', 'width']:
-        p, a, h, w = get_structure_props(array, x_sizes, y_sizes, structure, wrap=wrap)
+    if variable in ('area', 'perimeter', 'height', 'width'):
+        # Pad non-periodic edges with NaN so get_structure_* (which assumes
+        # full toroidal periodicity) correctly treats them as domain boundaries.
+        if wrap is None:
+            array = encase_in_value(array, value=np.nan)
+            x_sizes = encase_in_value(x_sizes, value=np.nan)
+            y_sizes = encase_in_value(y_sizes, value=np.nan)
+        elif wrap == 'sides':
+            # Periodic left-right, pad top-bottom only
+            array = np.concatenate([np.full((1, array.shape[1]), np.nan), array,
+                                    np.full((1, array.shape[1]), np.nan)], axis=0)
+            x_sizes = np.concatenate([np.full((1, x_sizes.shape[1]), np.nan), x_sizes,
+                                      np.full((1, x_sizes.shape[1]), np.nan)], axis=0)
+            y_sizes = np.concatenate([np.full((1, y_sizes.shape[1]), np.nan), y_sizes,
+                                      np.full((1, y_sizes.shape[1]), np.nan)], axis=0)
+        # wrap='both': fully periodic, no padding needed
+
         if variable == 'area':
-            to_bin = a
+            to_bin = get_structure_areas(array, x_sizes, y_sizes, structure)
         elif variable == 'perimeter':
-            to_bin = p
-        elif variable == 'height':
-            to_bin = h
-        elif variable == 'width':
-            to_bin = w
+            to_bin = get_structure_perimeters(array, x_sizes, y_sizes, structure)
+        elif variable in ('height', 'width'):
+            h, w = get_structure_height_width(array, x_sizes, y_sizes, structure)
+            to_bin = h if variable == 'height' else w
     elif variable == 'nested perimeter':
         to_bin = get_every_boundary_perimeter(array, x_sizes, y_sizes, False)
     else:

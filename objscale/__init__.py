@@ -21,6 +21,9 @@ from ._fractal_dimensions import (
 
 from ._object_analysis import (
     get_structure_props,
+    get_structure_areas,
+    get_structure_perimeters,
+    get_structure_height_width,
     get_every_boundary_perimeter,
     remove_structures_touching_border_nan,
     label_periodic_boundaries,
@@ -50,6 +53,9 @@ __all__ = [
     'get_locations_from_pixel_sizes',
     'label_size',
     'get_structure_props',
+    'get_structure_areas',
+    'get_structure_perimeters',
+    'get_structure_height_width',
     'get_every_boundary_perimeter',
     'remove_structures_touching_border_nan',
     'label_periodic_boundaries',

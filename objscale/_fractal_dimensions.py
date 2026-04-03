@@ -10,6 +10,8 @@ from ._object_analysis import (
     remove_structures_touching_border_nan,
     remove_structure_holes,
     get_structure_props,
+    get_structure_areas,
+    get_structure_perimeters,
     label_periodic_boundaries,
 )
 from ._utils import linear_regression, encase_in_value
@@ -656,7 +658,8 @@ def individual_fractal_dimension(
 
         array = remove_structures_touching_border_nan(array)
         array = remove_structure_holes(array)
-        new_p, new_a, _, _ = get_structure_props(array, xs, ys)
+        new_a = get_structure_areas(array, xs, ys)
+        new_p = get_structure_perimeters(array, xs, ys)
         areas.extend(new_a)
         perimeters.extend(new_p)
 
