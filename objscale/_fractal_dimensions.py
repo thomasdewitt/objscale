@@ -598,9 +598,9 @@ def individual_fractal_dimension(
     """
     Calculate the individual fractal dimension Df of objects within arrays.
 
-    The method uses linear regression on log a vs. log p, where a and p are
-    calculated not including structure holes, and omitting structures touching
-    the array edge.
+    The method uses linear regression on log a vs. log p, omitting structures
+    touching the array edge. By default, interior holes are filled before
+    computing areas and perimeters (see ``filled``).
 
     Parameters
     ----------
