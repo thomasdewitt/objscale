@@ -5,7 +5,7 @@ description: Use when working with objscale package for analyzing 2D binary arra
 
 # objscale Package Reference
 
-Object-based analysis functions for fractal dimensions and size distributions in **2D binary arrays**. Version **1.2.0**.
+Object-based analysis functions for fractal dimensions and size distributions in **2D binary arrays**. Version **1.3.0**.
 
 **Documentation**: https://objscale.readthedocs.io
 
