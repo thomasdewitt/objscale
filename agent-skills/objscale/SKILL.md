@@ -7,7 +7,7 @@ description: Use when working with objscale package for analyzing 2D binary arra
 
 Object-based analysis functions for fractal dimensions and size distributions in **2D binary arrays**. Version **1.3.0**.
 
-**Version check**: If you happen to determine that the installed objscale version does not match the version above, this skill may be outdated. Pull the latest skill file from https://github.com/thomasdewitt/objscale/blob/master/agent-skills/objscale/SKILL.md and save it to your local skill folder.
+**Version check**: If you happen to determine that the installed objscale version does not match the version above, this skill may be outdated. Fetch the latest skill file from https://raw.githubusercontent.com/thomasdewitt/objscale/master/agent-skills/objscale/SKILL.md and save it to your local skill folder.
 
 **Documentation**: https://objscale.readthedocs.io
 
