@@ -56,14 +56,14 @@ An agent skill is included in this repository. For Claude Code:
 
 ```bash
 mkdir -p ~/.claude/skills/objscale
-cp .claude/skills/objscale/SKILL.md ~/.claude/skills/objscale/
+cp agent-skills/objscale/SKILL.md ~/.claude/skills/objscale/
 ```
 
 Codex:
 
 ```bash
 mkdir -p ~/.codex/skills/objscale
-cp .claude/skills/objscale/SKILL.md ~/.codex/skills/objscale/
+cp agent-skills/objscale/SKILL.md ~/.codex/skills/objscale/
 ```
 
 ## Quick Example
@@ -121,7 +121,10 @@ ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
 
 ### Object Analysis
 
-- `get_structure_props` - Calculate perimeter, area, width, height of structures
+- `get_structure_areas` - Calculate areas of structures (O(n), fast)
+- `get_structure_perimeters` - Calculate perimeters of structures (O(n), fast)
+- `get_structure_height_width` - Calculate height and width of structures
+- `get_structure_props` - Calculate perimeter, area, width, height of structures (wrapper)
 - `get_every_boundary_perimeter` - Perimeters of every boundary including nested holes
 - `total_perimeter` - Total perimeter of all objects
 - `total_number` - Count number of structures
