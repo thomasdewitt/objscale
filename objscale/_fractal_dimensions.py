@@ -145,6 +145,26 @@ def ensemble_correlation_dimension(
     if bins[-1] / bins[0] < 10:
         raise ValueError(f'Available scale ratio ({maxlength / minlength:.2f}) is less than 10. Need at least one order of magnitude separation for reliable dimension estimation.')
 
+    if interior_circles_only:
+        # Check that maxlength leaves a usable interior region (at least 5x5 pixels)
+        domain_width = locations_x[int(h / 2), w - 1] - locations_x[int(h / 2), 0]
+        domain_height = locations_y[h - 1, int(w / 2)] - locations_y[0, int(w / 2)]
+        interior_width = domain_width - 2 * maxlength
+        interior_height = domain_height - 2 * maxlength
+        min_pixel_x = np.min(x_sizes)
+        min_pixel_y = np.min(y_sizes)
+        interior_pixels_x = interior_width / min_pixel_x if min_pixel_x > 0 else 0
+        interior_pixels_y = interior_height / min_pixel_y if min_pixel_y > 0 else 0
+        if interior_pixels_x < 5 or interior_pixels_y < 5:
+            raise ValueError(
+                f'interior_circles_only=True requires that maxlength leaves a usable '
+                f'interior region, but maxlength={maxlength:.1f} with a domain of '
+                f'{domain_width:.1f} x {domain_height:.1f} leaves only '
+                f'{max(interior_pixels_x, 0):.0f} x {max(interior_pixels_y, 0):.0f} '
+                f'pixels of interior (need at least 5x5). Reduce maxlength or set '
+                f'interior_circles_only=False.'
+            )
+
     C_l = np.zeros(bins.shape)
 
     for array in arrays:

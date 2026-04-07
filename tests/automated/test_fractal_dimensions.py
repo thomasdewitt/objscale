@@ -507,6 +507,22 @@ def test_individual_correlation_dimension(tolerance=0.05):
 # Main test runner
 # =============================================================================
 
+def test_correlation_dimension_maxlength_too_large():
+    """Test that maxlength too large for interior_circles_only raises ValueError."""
+    arr = (np.random.random((64, 64)) < 0.3).astype(float)
+    try:
+        objscale.ensemble_correlation_dimension(
+            arr, maxlength=32, interior_circles_only=True
+        )
+        raise AssertionError(
+            "Expected ValueError for maxlength=32 on 64x64 array with "
+            "interior_circles_only=True, but no error was raised"
+        )
+    except ValueError as e:
+        assert 'interior_circles_only' in str(e)
+        print(f"  correlation_dimension_maxlength_too_large: correctly raised ValueError, PASS")
+
+
 def run_all_tests():
     """Run all automated tests."""
     print("=" * 60)
@@ -544,6 +560,7 @@ def run_all_tests():
     standalone_tests = [
         test_individual_fractal_dimension_nan_surrounded,
         test_individual_correlation_dimension,
+        test_correlation_dimension_maxlength_too_large,
     ]
     for test_func in standalone_tests:
         try:
