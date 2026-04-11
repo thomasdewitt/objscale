@@ -479,6 +479,103 @@ def test_individual_fractal_dimension_nan_surrounded(tolerance=0.01):
     )
 
 
+def test_ensemble_renyi_dimension_box(seed='3x3_center', iterations=None, tolerance=0.05):
+    """Renyi q=0 should match the analytical box dimension and the
+    standalone ensemble_box_dimension wrapper exactly."""
+    if iterations is None:
+        iterations = default_iterations(seed)
+    expected_D = expected_ensemble_dimension(seed)
+    fractal = generate_fractal(seed=seed, iterations=iterations)
+
+    dim, error = objscale.ensemble_renyi_dimension(
+        [fractal], q=0.0, min_box_size=10, min_pixels=30
+    )
+
+    diff = abs(dim - expected_D)
+    passed = diff < tolerance
+    status = "PASS" if passed else "FAIL"
+    print(f"  renyi_dimension q=0 ({seed}): expected={expected_D:.4f}, actual={dim:.4f}, {status}")
+    assert passed, f"Renyi q=0 dimension {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
+
+    # Consistency: must equal the standalone ensemble_box_dimension wrapper exactly.
+    box_d, _ = objscale.ensemble_box_dimension(
+        [fractal], min_box_size=10, min_pixels=30
+    )
+    assert abs(dim - box_d) < 1e-10, (
+        f"renyi(q=0) {dim:.10f} != ensemble_box_dimension {box_d:.10f}"
+    )
+    print(f"  renyi_dimension q=0 ({seed}): matches ensemble_box_dimension wrapper, PASS")
+
+
+def _synthetic_fbm_level_set(size, H, seed):
+    """Pure-numpy 2D fBm via spectral synthesis, thresholded at the median.
+
+    For a fBm field with Hurst H, the level set has D_q = 2 - H for all q
+    (it is a monofractal — D_q is independent of q). This is the cleanest
+    deterministic test for the Rényi-dimension family.
+    """
+    rng = np.random.default_rng(seed)
+    kx = np.fft.fftfreq(size).reshape(1, -1)
+    ky = np.fft.fftfreq(size).reshape(-1, 1)
+    k = np.sqrt(kx ** 2 + ky ** 2)
+    k[0, 0] = 1.0  # avoid divide-by-zero at DC
+    # 2D fBm spectral exponent for amplitudes is -(H + 1).
+    spectrum = k ** (-(H + 1.0))
+    spectrum[0, 0] = 0.0  # zero mean
+    noise = rng.standard_normal((size, size)) + 1j * rng.standard_normal((size, size))
+    field = np.fft.ifft2(spectrum * noise).real
+    return (field > np.median(field)).astype(np.float64)
+
+
+def test_ensemble_renyi_dimension_fbm_monofractal(tolerance=0.15):
+    """For a 2D fBm level set the dimension is D_q = 2 - H for all q.
+
+    Smoke test for the q-vector path on a true monofractal. The tolerance
+    is loose because box-counting on a 512^2 fBm has well-known finite-size
+    bias of order 0.05-0.1; tighter accuracy needs much larger fields. The
+    real validation lives in the standalone experiment script. Here we
+    care that:
+      * the q-vector path runs end-to-end and returns finite numbers
+      * the scalar wrappers (ensemble_box_dimension, ensemble_information_dimension)
+        agree exactly with the corresponding vector entries
+      * the answer is in the right ballpark
+    """
+    H = 0.3
+    expected_D = 2.0 - H
+    arr = _synthetic_fbm_level_set(size=512, H=H, seed=0)
+
+    qs = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
+    D_arr, err_arr = objscale.ensemble_renyi_dimension(
+        [arr], q=qs, min_box_size=4, min_pixels=8
+    )
+
+    for q, d in zip(qs, D_arr):
+        diff = abs(d - expected_D)
+        passed = diff < tolerance
+        status = "PASS" if passed else "FAIL"
+        print(f"  renyi_fbm q={q}: expected~{expected_D:.4f}, actual={d:.4f}, {status}")
+        assert passed, (
+            f"Renyi q={q} on fBm gave {d:.4f}, expected ~{expected_D:.4f} +/- {tolerance}"
+        )
+
+    # Consistency: q=0 entry must equal the standalone ensemble_box_dimension wrapper.
+    box_d, _ = objscale.ensemble_box_dimension(
+        [arr], min_box_size=4, min_pixels=8
+    )
+    assert abs(D_arr[0] - box_d) < 1e-10, (
+        f"renyi(q=0) {D_arr[0]:.10f} != ensemble_box_dimension {box_d:.10f}"
+    )
+
+    # Consistency: q=1 entry must equal the standalone ensemble_information_dimension wrapper.
+    info_d, _ = objscale.ensemble_information_dimension(
+        [arr], min_box_size=4, min_pixels=8
+    )
+    assert abs(D_arr[2] - info_d) < 1e-10, (
+        f"renyi(q=1) {D_arr[2]:.10f} != ensemble_information_dimension {info_d:.10f}"
+    )
+    print(f"  renyi_fbm consistency: scalar wrappers match vector entries, PASS")
+
+
 def test_individual_correlation_dimension(tolerance=0.05):
     """
     Test individual correlation dimension on a 1D line (wide "eye" shape).
@@ -536,6 +633,7 @@ def run_all_tests():
     for seed in ['3x3_center', '5x5_center', '5x5_block']:
         tests = [
             lambda s=seed: test_ensemble_box_dimension(seed=s),
+            lambda s=seed: test_ensemble_renyi_dimension_box(seed=s),
             lambda s=seed: test_ensemble_correlation_dimension(seed=s),
             lambda s=seed: test_ensemble_correlation_dimension_nonuniform(seed=s),
             lambda s=seed: test_size_distribution(seed=s),
@@ -561,6 +659,7 @@ def run_all_tests():
         test_individual_fractal_dimension_nan_surrounded,
         test_individual_correlation_dimension,
         test_correlation_dimension_maxlength_too_large,
+        test_ensemble_renyi_dimension_fbm_monofractal,
     ]
     for test_func in standalone_tests:
         try:
