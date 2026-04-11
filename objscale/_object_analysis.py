@@ -616,34 +616,39 @@ def get_every_boundary_perimeter(
     ValueError
         If more than 100 nesting levels are found (likely infinite loop).
     """
-    # Encase once up front: pad + pixel-size arrays never change shape.
-    encased = encase_in_value(array)
+    # Encase once up front: pad + pixel-size arrays never change shape or content.
+    # Interior NaNs (e.g. satellite "no data" inside a cloud) MUST be preserved
+    # across iterations — `remove_structure_holes` treats NaN as not-a-hole, and
+    # `NaN - NaN = NaN` keeps the pattern through the layer subtraction. If we
+    # collapsed them to 0, a surrounded NaN would be filled on iteration 1 and
+    # then emerge as a spurious structure on iteration 2.
+    work = encase_in_value(array).astype(np.float32, copy=False)
     enc_xs = encase_in_value(x_sizes)
     enc_ys = encase_in_value(y_sizes)
 
-    # Capture the NaN mask (pad + any interior NaN) once. The perim kernel uses
-    # this to know which 0-cells are "outside domain" vs "background".
-    nan_mask_fixed = np.isnan(encased)
-
-    # Collapse NaN→0 in the working array so subsequent iterations are pure 0/1.
-    work = np.where(nan_mask_fixed, np.float32(0.0), encased).astype(np.float32, copy=False)
+    # NaN mask (pad + interior NaN) is static across iterations because NaN
+    # positions never move under the layer-subtract.
+    nan_mask_fixed = np.isnan(work)
 
     perimeters = []
     counter = 0
-    while work.any():
+    # (work == 1).any() is NaN-safe (NaN == 1 is False) and avoids the O(n)
+    # reduction np.nansum would do.
+    while (work == 1).any():
         counter += 1
         if counter > 100:
             raise ValueError('Hole layer limit reached: 100 layers')
         all_holes_filled = remove_structure_holes(work)
         lab, _, nl = label_structures(all_holes_filled, wrap='both')
         if lab is not None:
-            # Use the pre-computed pad mask, not label_structures's auto-computed
-            # one (which is all-False because `work` has no NaN).
+            # Pass the pre-computed NaN mask explicitly so the perim kernel
+            # correctly skips edges to NaN even though we reuse it each iteration.
             p = get_structure_perimeters(lab, nan_mask_fixed, nl, enc_xs, enc_ys)
             perimeters.extend(p[p > 0])
 
-        # Next layer: filled minus original. Since filled ≥ original pointwise,
-        # the old `new_array[all_holes_filled == 0] = 0` masking was redundant.
+        # Next layer: filled minus original. Since filled ≥ original on the
+        # finite pixels, the old `new_array[all_holes_filled == 0] = 0` masking
+        # was redundant. NaN pixels stay NaN via NaN - NaN = NaN.
         work = all_holes_filled - work
         # Now what were previously holes are clouds. What were previously clouds in holes are now holes in the "new" clouds.
     if return_nlevels:
