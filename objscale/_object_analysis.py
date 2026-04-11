@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from numpy.typing import NDArray
 from scipy.ndimage import label
 import numba
 from numba import njit, prange
-from numba.typed import List
 from skimage.segmentation import clear_border
 from ._utils import encase_in_value
 
@@ -270,7 +271,7 @@ def _compute_perimeters(labelled_array, nan_mask, x_sizes, y_sizes, n_labels):
 
 
 # =============================================================================
-# Height/width: existing per-structure parallel loop
+# Height/width: parallel row-chunked bounding-box kernel
 # =============================================================================
 
 def get_structure_height_width(
@@ -281,14 +282,21 @@ def get_structure_height_width(
     y_sizes: NDArray,
 ) -> tuple[NDArray, NDArray]:
     """
-    Calculate heights and widths of labelled structures.
+    Calculate heights and widths of labelled structures as bounding-box extents.
+
+    The height of a structure is the physical extent spanned by its
+    bounding-box rows; the width is the physical extent spanned by its
+    bounding-box columns. For structures that span a periodic boundary (when
+    ``labelled_array`` was produced with ``wrap='both'`` or ``'sides'``), the
+    smallest wrap-aware extent is used.
 
     Parameters
     ----------
     labelled_array : np.ndarray
         Labelled array from :func:`label_structures`.
     nan_mask : np.ndarray
-        Boolean NaN mask from :func:`label_structures`.
+        Boolean NaN mask from :func:`label_structures`. Currently unused; kept
+        for signature compatibility with the other ``get_structure_*`` functions.
     n_labels : int
         Number of labels from :func:`label_structures`.
     x_sizes : np.ndarray
@@ -307,92 +315,193 @@ def get_structure_height_width(
 
     Notes
     -----
-    If x_sizes or y_sizes are not uniform, the width will be the sum of the average
-    pixel widths of the pixels in the column and in the object. Similarly, the height
-    will be the sum of the average pixel heights of the pixels in the row and in the object.
+    Widths are well-defined only when ``x_sizes`` is constant within each
+    column (``x_sizes[:, j]`` does not vary for any ``j``); heights are
+    well-defined only when ``y_sizes`` is constant within each row. If either
+    invariant is violated, a :class:`UserWarning` is emitted and a per-row /
+    per-column nanmean is used as the canonical pixel size.
     """
     _validate_labelled(labelled_array)
 
-    separated, label_ids = _get_separated_structure_indices(labelled_array)
-    if len(separated) == 0:
-        return np.zeros(n_labels, dtype=np.float32), np.zeros(n_labels, dtype=np.float32)
+    # Ambiguity check for non-uniform pixel sizes within columns/rows.
+    # All-NaN pad rows/cols are treated as "no information" and skipped.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', category=RuntimeWarning)
+        xmin_col = np.nanmin(x_sizes, axis=0)
+        xmax_col = np.nanmax(x_sizes, axis=0)
+        ymin_row = np.nanmin(y_sizes, axis=1)
+        ymax_row = np.nanmax(y_sizes, axis=1)
+    x_both_finite = np.isfinite(xmin_col) & np.isfinite(xmax_col)
+    y_both_finite = np.isfinite(ymin_row) & np.isfinite(ymax_row)
+    if np.any((xmin_col != xmax_col) & x_both_finite):
+        warnings.warn(
+            'x_sizes varies within at least one column; widths are ambiguous. '
+            'Using per-column nanmean of x_sizes as the canonical column width.',
+            stacklevel=2,
+        )
+    if np.any((ymin_row != ymax_row) & y_both_finite):
+        warnings.warn(
+            'y_sizes varies within at least one row; heights are ambiguous. '
+            'Using per-row nanmean of y_sizes as the canonical row height.',
+            stacklevel=2,
+        )
 
-    h_sparse, w_sparse = _compute_height_width(labelled_array, List(separated), x_sizes, y_sizes)
+    nrows, ncols = labelled_array.shape
 
-    # Map sparse results back to label-indexed arrays
+    # Canonical per-row y_size and per-col x_size, NaN→0 for pad rows/cols.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', category=RuntimeWarning)
+        y_per_row = np.nanmean(y_sizes, axis=1).astype(np.float32)
+        x_per_col = np.nanmean(x_sizes, axis=0).astype(np.float32)
+    y_per_row = np.nan_to_num(y_per_row, nan=0.0)
+    x_per_col = np.nan_to_num(x_per_col, nan=0.0)
+
+    # Cumulative sums for O(1) range extent lookup.
+    cumy = np.concatenate(([np.float32(0.0)], np.cumsum(y_per_row, dtype=np.float32)))
+    cumx = np.concatenate(([np.float32(0.0)], np.cumsum(x_per_col, dtype=np.float32)))
+
+    if n_labels == 0:
+        return np.zeros(0, dtype=np.float32), np.zeros(0, dtype=np.float32)
+
+    min_r, max_r, min_c, max_c, t_r0, t_rN, t_c0, t_cN = _compute_bbox(
+        labelled_array, n_labels
+    )
+
     heights = np.zeros(n_labels, dtype=np.float32)
     widths = np.zeros(n_labels, dtype=np.float32)
-    for k, lab in enumerate(label_ids):
-        heights[lab - 1] = h_sparse[k]
-        widths[lab - 1] = w_sparse[k]
+
+    for l in range(n_labels):
+        if max_r[l] < 0:
+            # no pixels for this label (e.g. merged away by periodic wrap)
+            continue
+
+        if t_r0[l] and t_rN[l]:
+            heights[l] = _wrap_aware_extent(
+                labelled_array, np.float32(l + 1), axis=0, cum=cumy, length=nrows
+            )
+        else:
+            heights[l] = cumy[max_r[l] + 1] - cumy[min_r[l]]
+
+        if t_c0[l] and t_cN[l]:
+            widths[l] = _wrap_aware_extent(
+                labelled_array, np.float32(l + 1), axis=1, cum=cumx, length=ncols
+            )
+        else:
+            widths[l] = cumx[max_c[l] + 1] - cumx[min_c[l]]
+
     return heights, widths
 
 
-def _get_separated_structure_indices(labelled_array):
-    """Get list of 2D index arrays, one per structure label.
-
-    Returns (separated, label_ids) where label_ids[k] is the label value
-    for separated[k].
-    """
-    values = np.sort(labelled_array.flatten())
-    original_locations = np.argsort(labelled_array.flatten())
-    indices_2d = np.array(np.unravel_index(original_locations, labelled_array.shape)).T
-
-    split_here = np.roll(values, shift=-1) - values
-    split_here[-1] = 0
-
-    split_points = np.where(split_here != 0)[0] + 1
-    separated = np.split(indices_2d, split_points)
-    separated = separated[1:]  # Remove label 0
-
-    # Extract the label id for each group
-    unique_labels = np.unique(values)
-    label_ids = unique_labels[unique_labels > 0].astype(int)
-    return separated, label_ids
-
-
 @njit(parallel=True)
-def _compute_height_width(labelled_array, separated_structure_indices, x_sizes, y_sizes):
-    """Compute height and width per structure via per-structure parallel loop."""
-    n_structures = len(separated_structure_indices)
-    h = np.empty(n_structures, dtype=np.float32)
-    w = np.empty(n_structures, dtype=np.float32)
+def _compute_bbox(labelled_array, n_labels):
+    """Parallel row-chunked bbox kernel.
 
-    for iteration in prange(n_structures):
-        iteration = np.int64(iteration)
-        structure_coords = separated_structure_indices[iteration]
+    Returns per-label min/max row/col and flags for whether the label touches
+    the first/last row or column. Index ``l`` corresponds to label value ``l+1``.
+    """
+    nrows, ncols = labelled_array.shape
+    n_pixels = nrows * ncols
 
-        y_coords_structure = np.array([c[0] for c in structure_coords])
-        x_coords_structure = np.array([c[1] for c in structure_coords])
-        unique_y_coords = []
-        unique_x_coords = []
-        height = 0.0
-        width = 0.0
+    # Memory guard: per-thread buffers are 20 bytes per label (4×int32 + 4×bool).
+    # Same "<4× array bytes" budget as the perimeter kernel.
+    n_threads = numba.config.NUMBA_NUM_THREADS
+    max_threads = max(1, (4 * n_pixels) // ((n_labels + 1) * 5))
+    n_threads = min(n_threads, max_threads)
+    if n_threads < 1:
+        n_threads = 1
 
-        for i, j in structure_coords:
-            if i not in unique_y_coords:
-                unique_y_coords.append(i)
-                indices = (y_coords_structure == i)
-                y_sizes_here = []
-                for loc, take in enumerate(indices):
-                    if take:
-                        y_sizes_here.append(y_sizes[y_coords_structure[loc], x_coords_structure[loc]])
-                y_sizes_here = np.array(y_sizes_here)
-                height += np.mean(y_sizes_here)
-            if j not in unique_x_coords:
-                unique_x_coords.append(j)
-                indices = (x_coords_structure == j)
-                x_sizes_here = []
-                for loc, take in enumerate(indices):
-                    if take:
-                        x_sizes_here.append(x_sizes[y_coords_structure[loc], x_coords_structure[loc]])
-                x_sizes_here = np.array(x_sizes_here)
-                width += np.mean(x_sizes_here)
+    chunk_size = (nrows + n_threads - 1) // n_threads
 
-        h[iteration] = height
-        w[iteration] = width
+    local_min_r = np.full((n_threads, n_labels + 1), nrows, dtype=np.int32)
+    local_max_r = np.full((n_threads, n_labels + 1), -1, dtype=np.int32)
+    local_min_c = np.full((n_threads, n_labels + 1), ncols, dtype=np.int32)
+    local_max_c = np.full((n_threads, n_labels + 1), -1, dtype=np.int32)
+    local_t_r0 = np.zeros((n_threads, n_labels + 1), dtype=np.bool_)
+    local_t_rN = np.zeros((n_threads, n_labels + 1), dtype=np.bool_)
+    local_t_c0 = np.zeros((n_threads, n_labels + 1), dtype=np.bool_)
+    local_t_cN = np.zeros((n_threads, n_labels + 1), dtype=np.bool_)
 
-    return h, w
+    for t in prange(n_threads):
+        start = t * chunk_size
+        end = min(start + chunk_size, nrows)
+        for i in range(start, end):
+            for j in range(ncols):
+                lab = labelled_array[i, j]
+                if lab <= 0:
+                    continue
+                li = np.intp(lab)
+                if i < local_min_r[t, li]:
+                    local_min_r[t, li] = i
+                if i > local_max_r[t, li]:
+                    local_max_r[t, li] = i
+                if j < local_min_c[t, li]:
+                    local_min_c[t, li] = j
+                if j > local_max_c[t, li]:
+                    local_max_c[t, li] = j
+                if i == 0:
+                    local_t_r0[t, li] = True
+                if i == nrows - 1:
+                    local_t_rN[t, li] = True
+                if j == 0:
+                    local_t_c0[t, li] = True
+                if j == ncols - 1:
+                    local_t_cN[t, li] = True
+
+    # Reduction across threads (index l corresponds to label value l+1).
+    min_r = np.full(n_labels, nrows, dtype=np.int32)
+    max_r = np.full(n_labels, -1, dtype=np.int32)
+    min_c = np.full(n_labels, ncols, dtype=np.int32)
+    max_c = np.full(n_labels, -1, dtype=np.int32)
+    t_r0 = np.zeros(n_labels, dtype=np.bool_)
+    t_rN = np.zeros(n_labels, dtype=np.bool_)
+    t_c0 = np.zeros(n_labels, dtype=np.bool_)
+    t_cN = np.zeros(n_labels, dtype=np.bool_)
+
+    for l in range(n_labels):
+        li = l + 1
+        for t in range(n_threads):
+            if local_min_r[t, li] < min_r[l]:
+                min_r[l] = local_min_r[t, li]
+            if local_max_r[t, li] > max_r[l]:
+                max_r[l] = local_max_r[t, li]
+            if local_min_c[t, li] < min_c[l]:
+                min_c[l] = local_min_c[t, li]
+            if local_max_c[t, li] > max_c[l]:
+                max_c[l] = local_max_c[t, li]
+            if local_t_r0[t, li]:
+                t_r0[l] = True
+            if local_t_rN[t, li]:
+                t_rN[l] = True
+            if local_t_c0[t, li]:
+                t_c0[l] = True
+            if local_t_cN[t, li]:
+                t_cN[l] = True
+
+    return min_r, max_r, min_c, max_c, t_r0, t_rN, t_c0, t_cN
+
+
+def _wrap_aware_extent(labelled_array, lab_value, axis, cum, length):
+    """Compute wrap-aware bbox extent for a label that touches both edges of ``axis``.
+
+    ``axis=0`` → row extent (height), ``axis=1`` → column extent (width).
+    The structure is assumed to occupy the first and last index along the axis,
+    so the largest *non-wrap* gap between consecutive occupied indices identifies
+    the seam to wrap around.
+    """
+    if axis == 0:
+        mask = (labelled_array == lab_value).any(axis=1)
+    else:
+        mask = (labelled_array == lab_value).any(axis=0)
+    occ = np.nonzero(mask)[0]
+    if len(occ) == 0:
+        return np.float32(0.0)
+    if len(occ) == 1:
+        return cum[occ[0] + 1] - cum[occ[0]]
+
+    gaps = occ[1:] - occ[:-1] - 1
+    k = int(np.argmax(gaps))
+    # bbox wraps around the seam: covers occ[k+1]..length-1 then 0..occ[k]
+    return (cum[length] - cum[occ[k + 1]]) + (cum[occ[k] + 1] - cum[0])
 
 
 # =============================================================================
@@ -507,25 +616,35 @@ def get_every_boundary_perimeter(
     ValueError
         If more than 100 nesting levels are found (likely infinite loop).
     """
+    # Encase once up front: pad + pixel-size arrays never change shape.
+    encased = encase_in_value(array)
+    enc_xs = encase_in_value(x_sizes)
+    enc_ys = encase_in_value(y_sizes)
+
+    # Capture the NaN mask (pad + any interior NaN) once. The perim kernel uses
+    # this to know which 0-cells are "outside domain" vs "background".
+    nan_mask_fixed = np.isnan(encased)
+
+    # Collapse NaN→0 in the working array so subsequent iterations are pure 0/1.
+    work = np.where(nan_mask_fixed, np.float32(0.0), encased).astype(np.float32, copy=False)
+
     perimeters = []
     counter = 0
-    while np.nansum(array) != 0:
+    while work.any():
         counter += 1
         if counter > 100:
             raise ValueError('Hole layer limit reached: 100 layers')
-        all_holes_filled = remove_structure_holes(array)
-        encased = encase_in_value(all_holes_filled)
-        enc_xs = encase_in_value(x_sizes)
-        enc_ys = encase_in_value(y_sizes)
-        lab, nm, nl = label_structures(encased, wrap='both')
+        all_holes_filled = remove_structure_holes(work)
+        lab, _, nl = label_structures(all_holes_filled, wrap='both')
         if lab is not None:
-            p = get_structure_perimeters(lab, nm, nl, enc_xs, enc_ys)
+            # Use the pre-computed pad mask, not label_structures's auto-computed
+            # one (which is all-False because `work` has no NaN).
+            p = get_structure_perimeters(lab, nan_mask_fixed, nl, enc_xs, enc_ys)
             perimeters.extend(p[p > 0])
 
-        # remove one layer
-        new_array = all_holes_filled - array
-        new_array[all_holes_filled == 0] = 0
-        array = new_array
+        # Next layer: filled minus original. Since filled ≥ original pointwise,
+        # the old `new_array[all_holes_filled == 0] = 0` masking was redundant.
+        work = all_holes_filled - work
         # Now what were previously holes are clouds. What were previously clouds in holes are now holes in the "new" clouds.
     if return_nlevels:
         return perimeters, counter
@@ -646,11 +765,10 @@ def remove_structure_holes(
     labelled, _ = label((1 - filled))
     if periodic is not False:
         labelled = _merge_periodic_labels(labelled, periodic)
-    # largest structure will be the background or the cloudy areas.
-    unique_values, unique_counts = np.unique(labelled.flatten(), return_counts=True)
-    # Make sure we don't identify the cloudy areas as the background.
-    unique_counts, unique_values = unique_counts[unique_values != 0], unique_values[unique_values != 0]
-    label_of_background = unique_values[unique_counts.argmax()]
+    # Find the background (largest 0-component) via bincount — O(n), no sort.
+    counts = np.bincount(labelled.ravel())
+    counts[0] = 0  # ignore the "labelled == 0" bucket (cloud pixels)
+    label_of_background = counts.argmax()
 
     filled[(labelled != 0) & (labelled != label_of_background)] = 1
 
