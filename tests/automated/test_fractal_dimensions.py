@@ -162,7 +162,7 @@ def test_ensemble_box_dimension(seed='3x3_center', iterations=None, tolerance=0.
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
     dim, error = objscale.ensemble_box_dimension(
-        [fractal], min_box_size=10, min_pixels=30
+        [fractal], min_box_size=10, max_box_size=64
     )
 
     diff = abs(dim - expected_D)
@@ -488,7 +488,7 @@ def test_ensemble_renyi_dimension_box(seed='3x3_center', iterations=None, tolera
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
     dim, error = objscale.ensemble_renyi_dimension(
-        [fractal], q=0.0, min_box_size=10, min_pixels=30
+        [fractal], q=0.0, min_box_size=10, max_box_size=64
     )
 
     diff = abs(dim - expected_D)
@@ -499,7 +499,7 @@ def test_ensemble_renyi_dimension_box(seed='3x3_center', iterations=None, tolera
 
     # Consistency: must equal the standalone ensemble_box_dimension wrapper exactly.
     box_d, _ = objscale.ensemble_box_dimension(
-        [fractal], min_box_size=10, min_pixels=30
+        [fractal], min_box_size=10, max_box_size=64
     )
     assert abs(dim - box_d) < 1e-10, (
         f"renyi(q=0) {dim:.10f} != ensemble_box_dimension {box_d:.10f}"
@@ -546,7 +546,7 @@ def test_ensemble_renyi_dimension_fbm_monofractal(tolerance=0.15):
 
     qs = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
     D_arr, err_arr = objscale.ensemble_renyi_dimension(
-        [arr], q=qs, min_box_size=4, min_pixels=8
+        [arr], q=qs, min_box_size=4, max_box_size=64
     )
 
     for q, d in zip(qs, D_arr):
@@ -560,7 +560,7 @@ def test_ensemble_renyi_dimension_fbm_monofractal(tolerance=0.15):
 
     # Consistency: q=0 entry must equal the standalone ensemble_box_dimension wrapper.
     box_d, _ = objscale.ensemble_box_dimension(
-        [arr], min_box_size=4, min_pixels=8
+        [arr], min_box_size=4, max_box_size=64
     )
     assert abs(D_arr[0] - box_d) < 1e-10, (
         f"renyi(q=0) {D_arr[0]:.10f} != ensemble_box_dimension {box_d:.10f}"
@@ -568,7 +568,7 @@ def test_ensemble_renyi_dimension_fbm_monofractal(tolerance=0.15):
 
     # Consistency: q=1 entry must equal the standalone ensemble_information_dimension wrapper.
     info_d, _ = objscale.ensemble_information_dimension(
-        [arr], min_box_size=4, min_pixels=8
+        [arr], min_box_size=4, max_box_size=64
     )
     assert abs(D_arr[2] - info_d) < 1e-10, (
         f"renyi(q=1) {D_arr[2]:.10f} != ensemble_information_dimension {info_d:.10f}"

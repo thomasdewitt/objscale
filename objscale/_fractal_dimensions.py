@@ -565,7 +565,7 @@ def ensemble_renyi_dimension(
     q: float | NDArray = 0.0,
     set: str = 'edge',
     box_sizes: str | NDArray = 'default',
-    min_pixels: int = 1,
+    max_box_size: int | None = None,
     min_box_size: int = 2,
     box_origin_shift: tuple[float, float] = (0.0, 0.0),
     return_values: bool = False,
@@ -609,10 +609,10 @@ def ensemble_renyi_dimension(
         * ``'ones'``: the set of 1-pixels themselves, no preprocessing.
     box_sizes : 'default' or array-like, default='default'
         Integer box sizes in pixels. If 'default', powers of 2 from
-        ``min_box_size`` up to the largest size that satisfies ``min_pixels``.
-    min_pixels : int, default=1
-        Largest box size, in units of the number of boxes required to cover
-        the smaller array dimension.
+        ``min_box_size`` up to ``max_box_size``.
+    max_box_size : int or None, default=None
+        Largest box size in pixels. If None, uses the smaller array
+        dimension (i.e. the largest box that fits at all).
     min_box_size : int, default=2
         Smallest box size in pixels.
     box_origin_shift : tuple of (float, float), default=(0.0, 0.0)
@@ -684,21 +684,24 @@ def ensemble_renyi_dimension(
     q_scalar = np.isscalar(q)
     q_arr = np.atleast_1d(np.asarray(q, dtype=np.float64))
 
-    # Resolve box_sizes (mirrors ensemble_box_dimension)
+    # Resolve box_sizes
     if isinstance(box_sizes, str):
         if box_sizes != 'default':
             raise ValueError(f'box_sizes={box_sizes} not supported')
         box_sizes_arr = 2 ** np.arange(1, 15)
     else:
         box_sizes_arr = np.asarray(box_sizes)
-    max_factor = min(binary_arrays[0].shape) / max(min_pixels, 1)
-    box_sizes_arr = box_sizes_arr[box_sizes_arr <= max_factor]
+    if max_box_size is None:
+        max_box_size_eff = min(binary_arrays[0].shape)
+    else:
+        max_box_size_eff = int(max_box_size)
+    box_sizes_arr = box_sizes_arr[box_sizes_arr <= max_box_size_eff]
     box_sizes_arr = box_sizes_arr[box_sizes_arr >= min_box_size]
     box_sizes_arr = np.unique(box_sizes_arr.astype(np.int64))
     if box_sizes_arr.size < 3:
         raise ValueError(
             f'Need at least 3 valid box sizes for a slope fit, got {box_sizes_arr.size}. '
-            f'Reduce min_box_size or min_pixels, or pass an explicit box_sizes array.'
+            f'Reduce min_box_size, raise max_box_size, or pass an explicit box_sizes array.'
         )
 
     # Build the set arrays
@@ -732,7 +735,7 @@ def ensemble_renyi_dimension(
 def ensemble_box_dimension(
     binary_arrays: NDArray | list[NDArray],
     set: str = 'edge',
-    min_pixels: int = 1,
+    max_box_size: int | None = None,
     min_box_size: int = 2,
     box_sizes: str | NDArray = 'default',
     return_values: bool = False
@@ -753,14 +756,13 @@ def ensemble_box_dimension(
         - 'edge': Box dimension of the set of boundaries (1-pixels with at
           least one 0-neighbor).
         - 'ones': Box dimension of the set of 1-pixels.
-    min_pixels : int, default=1
-        Largest box size, in units of the number of boxes required to cover the
-        array in the smaller direction.
+    max_box_size : int or None, default=None
+        Largest box size in pixels. If None, uses the smaller array dimension.
     min_box_size : int, default=2
-        Smallest box size.
+        Smallest box size in pixels.
     box_sizes : array-like or 'default', default='default'
-        Box sizes used. If 'default', uses powers of 2 up to 2^14 that satisfy
-        the above criteria.
+        Box sizes used. If 'default', uses powers of 2 from ``min_box_size``
+        up to ``max_box_size``.
     return_values : bool, default=False
         If True, return additional data used in the calculation.
 
@@ -787,7 +789,7 @@ def ensemble_box_dimension(
         q=0.0,
         set=set,
         box_sizes=box_sizes,
-        min_pixels=min_pixels,
+        max_box_size=max_box_size,
         min_box_size=min_box_size,
         return_values=return_values,
     )
@@ -796,7 +798,7 @@ def ensemble_box_dimension(
 def ensemble_information_dimension(
     binary_arrays: NDArray | list[NDArray],
     set: str = 'edge',
-    min_pixels: int = 1,
+    max_box_size: int | None = None,
     min_box_size: int = 2,
     box_sizes: str | NDArray = 'default',
     return_values: bool = False
@@ -824,7 +826,7 @@ def ensemble_information_dimension(
         A list of 2D binary arrays or a single 2D binary array.
     set : str, default='edge'
         Which set to measure. See :func:`ensemble_renyi_dimension`.
-    min_pixels, min_box_size, box_sizes, return_values
+    max_box_size, min_box_size, box_sizes, return_values
         Same as :func:`ensemble_box_dimension`.
 
     Returns
@@ -851,7 +853,7 @@ def ensemble_information_dimension(
         q=1.0,
         set=set,
         box_sizes=box_sizes,
-        min_pixels=min_pixels,
+        max_box_size=max_box_size,
         min_box_size=min_box_size,
         return_values=return_values,
     )
