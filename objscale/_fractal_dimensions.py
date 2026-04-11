@@ -34,7 +34,7 @@ __all__ = [
 ]
 
 
-@numba.njit(parallel=True, fastmath=True, cache=True)
+@numba.njit(parallel=True, fastmath=True)
 def _box_sum_2d(arr: NDArray, factor: int) -> NDArray:
     """Sum a 2D array into ``(h//factor, w//factor)`` boxes of size ``factor``.
 
@@ -490,17 +490,25 @@ def _renyi_dimension_from_set(
 
     for k, factor in enumerate(box_sizes):
         factor = int(factor)
-        # Pool box counts and total interior pixels across the ensemble
+        # Pool box counts and total interior pixels across the ensemble.
+        # The caller (ensemble_renyi_dimension) is responsible for ensuring
+        # that every array fits at every factor; if h_full or w_full ever
+        # came out 0 here, the ensemble would silently shrink at that factor
+        # and bias the slope. Treat that as an internal error.
         pooled_n: list[NDArray] = []
         V_total = 0  # total interior pixel area summed across arrays
-        for arr in set_arrays:
+        for arr_idx, arr in enumerate(set_arrays):
             sy_pix = int(round(sy * factor))
             sx_pix = int(round(sx * factor))
             shifted = arr[sy_pix:, sx_pix:]
             h_full = (shifted.shape[0] // factor) * factor
             w_full = (shifted.shape[1] // factor) * factor
             if h_full == 0 or w_full == 0:
-                continue
+                raise AssertionError(
+                    f'Internal error: array {arr_idx} of shape {arr.shape} cannot '
+                    f'fit a single box of size {factor} after shift {(sx_pix, sy_pix)}. '
+                    f'The wrapper should have filtered this box size out.'
+                )
             trimmed = shifted[:h_full, :w_full]
             if not trimmed.flags['C_CONTIGUOUS']:
                 trimmed = np.ascontiguousarray(trimmed)
@@ -684,24 +692,48 @@ def ensemble_renyi_dimension(
     q_scalar = np.isscalar(q)
     q_arr = np.atleast_1d(np.asarray(q, dtype=np.float64))
 
-    # Resolve box_sizes
+    # Resolve box_sizes. The maximum box size is bounded by the *smallest*
+    # array in the ensemble (after subtracting any box_origin_shift overhead),
+    # so that every array contributes a fully-tiled interior region at every
+    # box size. Otherwise, smaller arrays would silently drop out at large
+    # box sizes and bias the slope.
     if isinstance(box_sizes, str):
         if box_sizes != 'default':
             raise ValueError(f'box_sizes={box_sizes} not supported')
         box_sizes_arr = 2 ** np.arange(1, 15)
     else:
         box_sizes_arr = np.asarray(box_sizes)
+
+    smallest_dim = min(min(arr.shape) for arr in binary_arrays)
+    # box_origin_shift can push the start past the first row/col by up to
+    # factor-1 pixels, so the effective "available" extent is one factor
+    # short in the worst case. Require shape >= factor + (factor - 1) =
+    # 2*factor - 1, i.e. factor <= (shape + 1) // 2 in the worst case.
+    # For shift=(0, 0) (the common case), the bound is just factor <= shape.
+    sx, sy = box_origin_shift
+    max_shift_frac = max(abs(sx), abs(sy))
+    if max_shift_frac >= 1.0:
+        raise ValueError(
+            f'box_origin_shift fractions must lie in [0, 1), got {box_origin_shift}'
+        )
+    # Worst-case shift in pixels at factor F is round(max_shift_frac * F).
+    # Require F + round(max_shift_frac * F) <= smallest_dim.
+    # Rearranging: F <= smallest_dim / (1 + max_shift_frac).
+    auto_max = int(smallest_dim / (1.0 + max_shift_frac))
     if max_box_size is None:
-        max_box_size_eff = min(binary_arrays[0].shape)
+        max_box_size_eff = auto_max
     else:
-        max_box_size_eff = int(max_box_size)
+        max_box_size_eff = min(int(max_box_size), auto_max)
+
     box_sizes_arr = box_sizes_arr[box_sizes_arr <= max_box_size_eff]
     box_sizes_arr = box_sizes_arr[box_sizes_arr >= min_box_size]
     box_sizes_arr = np.unique(box_sizes_arr.astype(np.int64))
     if box_sizes_arr.size < 3:
         raise ValueError(
             f'Need at least 3 valid box sizes for a slope fit, got {box_sizes_arr.size}. '
-            f'Reduce min_box_size, raise max_box_size, or pass an explicit box_sizes array.'
+            f'Smallest array dimension is {smallest_dim}, max usable box size is '
+            f'{max_box_size_eff}. Reduce min_box_size, raise max_box_size, increase '
+            f'array size, or pass an explicit box_sizes array.'
         )
 
     # Build the set arrays

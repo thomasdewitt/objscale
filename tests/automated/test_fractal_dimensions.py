@@ -507,6 +507,57 @@ def test_ensemble_renyi_dimension_box(seed='3x3_center', iterations=None, tolera
     print(f"  renyi_dimension q=0 ({seed}): matches ensemble_box_dimension wrapper, PASS")
 
 
+def test_ensemble_renyi_dimension_all_ones_analytic():
+    """Analytic oracle: an all-ones array has D_q = 2 exactly for any q.
+
+    For an all-ones array of side n with box size F, every box has n_i = F^2,
+    so all p_i = F^2/n^2 are equal and Z_q^(p) = N_b * (F^2/n^2)^q = (n^2/F^2)^(1-q).
+    Then log Z_q vs log F has slope 2*(q-1), giving D_q = 2 exactly. The
+    Shannon-entropy form at q=1 likewise gives -log(N_b) ~ -2 log F + const,
+    slope -2 = -D_1 → D_1 = 2.
+
+    Also probes the mixed-size-ensemble code path that the codex review
+    flagged as silently dropping smaller arrays at large box sizes (the bug
+    biased D_q upward to ~2.026 on a 64+16 ensemble).
+    """
+    # Single array
+    arr = np.ones((128, 128), dtype=np.float64)
+    for q in [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]:
+        D, _ = objscale.ensemble_renyi_dimension(
+            [arr], q=q, set='ones',
+            box_sizes=[2, 4, 8, 16, 32, 64], min_box_size=2,
+        )
+        assert abs(D - 2.0) < 1e-10, (
+            f"all-ones single array: q={q} gave D={D:.10f}, expected exactly 2.0"
+        )
+    print("  renyi_all_ones single array: D_q == 2 exactly for q in {0,0.5,1,1.5,2,3}, PASS")
+
+    # Mixed-size ensemble (codex's regression case)
+    a = np.ones((64, 64), dtype=np.float64)
+    b = np.ones((16, 16), dtype=np.float64)
+    for q in [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]:
+        D, _ = objscale.ensemble_renyi_dimension(
+            [a, b], q=q, set='ones',
+            box_sizes=[2, 4, 8, 16], min_box_size=2,
+        )
+        assert abs(D - 2.0) < 1e-10, (
+            f"all-ones mixed-size ensemble: q={q} gave D={D:.10f}, expected exactly 2.0"
+        )
+    print("  renyi_all_ones mixed-size ensemble: D_q == 2 exactly for q in {0,0.5,1,1.5,2,3}, PASS")
+
+    # Vector q on mixed-size ensemble
+    qs = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 3.0])
+    D_vec, _ = objscale.ensemble_renyi_dimension(
+        [a, b], q=qs, set='ones',
+        box_sizes=[2, 4, 8, 16], min_box_size=2,
+    )
+    for q, d in zip(qs, D_vec):
+        assert abs(d - 2.0) < 1e-10, (
+            f"all-ones vector q: q={q} gave D={d:.10f}, expected exactly 2.0"
+        )
+    print("  renyi_all_ones vector q on mixed-size ensemble: PASS")
+
+
 def _synthetic_fbm_level_set(size, H, seed):
     """Pure-numpy 2D fBm via spectral synthesis, thresholded at the median.
 
@@ -659,6 +710,7 @@ def run_all_tests():
         test_individual_fractal_dimension_nan_surrounded,
         test_individual_correlation_dimension,
         test_correlation_dimension_maxlength_too_large,
+        test_ensemble_renyi_dimension_all_ones_analytic,
         test_ensemble_renyi_dimension_fbm_monofractal,
     ]
     for test_func in standalone_tests:

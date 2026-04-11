@@ -129,15 +129,54 @@ objscale.individual_fractal_dimension(
 ```
 
 ```python
+objscale.ensemble_renyi_dimension(
+    binary_arrays,         # Binary arrays (list or single)
+    q=0.0,                 # Rényi order(s); scalar or 1-D array
+    set='edge',            # 'edge' (one-sided edge mask: 1-pixels with a 0-neighbor) or 'ones'
+    box_sizes='default',   # Custom box sizes or 'default' (powers of 2)
+    max_box_size=None,     # Largest box in pixels (None = min(arr.shape))
+    min_box_size=2,        # Smallest box in pixels
+    box_origin_shift=(0.0, 0.0),  # Fractional (sx, sy) shift of box grid origin
+    return_values=False    # Return (dim, err, box_sizes, partition)
+) -> (D_q, err) | (D_q, err, box_sizes, partition)
+```
+
+The Rényi family generalizes box-counting (q=0), information (q=1), and
+correlation (q=2) dimensions into a single function. For monofractal sets
+D_q is constant in q; for multifractal sets D_q decreases with q. q can be
+a scalar or a 1-D array — the latter returns arrays of D_q values and a
+partition matrix with one row per q. Always uses interior-only boxes
+(input is trimmed to a multiple of the current box size); for q != 1 the
+normalization is geometric (n_i / V where V is total interior pixel area);
+for q == 1 the Shannon entropy form is used (which intrinsically requires
+probability normalization).
+
+```python
 objscale.ensemble_box_dimension(
     binary_arrays,         # Binary arrays (list or single)
-    set='edge',            # 'edge' (boundaries) or 'ones' (all 1s)
-    min_pixels=1,          # Largest box size constraint
-    min_box_size=2,        # Smallest box size
+    set='edge',            # 'edge' or 'ones'
+    max_box_size=None,     # Largest box in pixels (None = min(arr.shape))
+    min_box_size=2,        # Smallest box in pixels
     box_sizes='default',   # Custom box sizes or 'default' (powers of 2)
     return_values=False    # Return (dim, err, box_sizes, counts)
-) -> (dimension, error) | (dimension, error, box_sizes, mean_counts)
+) -> (D_0, err) | (D_0, err, box_sizes, n_boxes)
 ```
+
+Equivalent to `ensemble_renyi_dimension(..., q=0)`.
+
+```python
+objscale.ensemble_information_dimension(
+    binary_arrays,         # Binary arrays (list or single)
+    set='edge',            # 'edge' or 'ones'
+    max_box_size=None,     # Largest box in pixels (None = min(arr.shape))
+    min_box_size=2,        # Smallest box in pixels
+    box_sizes='default',   # Custom box sizes or 'default' (powers of 2)
+    return_values=False    # Return (dim, err, box_sizes, entropy)
+) -> (D_1, err) | (D_1, err, box_sizes, S1)
+```
+
+Equivalent to `ensemble_renyi_dimension(..., q=1)`. Uses the Shannon
+entropy form `S_1 = -sum p_i log p_i`.
 
 ### Size Distributions
 
