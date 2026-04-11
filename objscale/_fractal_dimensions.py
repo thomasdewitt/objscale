@@ -19,6 +19,8 @@ from ._utils import linear_regression, encase_in_value
 __all__ = [
     'ensemble_correlation_dimension',
     'ensemble_box_dimension',
+    'ensemble_information_dimension',
+    'ensemble_renyi_dimension',
     'individual_fractal_dimension',
     'get_coords_of_boundaries',
     'get_locations_from_pixel_sizes',
@@ -129,6 +131,17 @@ def ensemble_correlation_dimension(
     ValueError
         If arrays contain NaN values, if pixel sizes are invalid, or if scale
         range is insufficient.
+
+    Notes
+    -----
+    This function uses the Grassberger-Procaccia pairwise-distance method:
+    it counts pairs of set points separated by less than ``l`` and fits a
+    power law. This is theoretically equivalent to ``q=2`` of the Rényi
+    family, ``ensemble_renyi_dimension(..., q=2, set='edge')``, but the two
+    will not give bit-identical numbers on finite-resolution data because
+    they are sensitive to discretization in different ways. The
+    Grassberger-Procaccia form converges in scale faster on small images,
+    so we keep both implementations.
     """
     if isinstance(arrays, np.ndarray):
         arrays = [arrays]
@@ -410,6 +423,312 @@ def individual_correlation_dimension(
     )
 
 
+def _one_sided_edge_mask(binary: NDArray) -> NDArray:
+    """One-sided 4-connected edge mask: 1-pixels with at least one 0-neighbor.
+
+    Pixels on the array boundary count as having a "0 neighbor" outside the
+    domain, matching the convention of `set='ones'` for boundary handling.
+    Returns an int8 mask.
+    """
+    b = binary.astype(np.int8, copy=False)
+    h, w = b.shape
+    # neighbor[i,j] = OR of (b[i,j] == 1 AND any 4-neighbor == 0)
+    has_zero_nbr = np.zeros((h, w), dtype=bool)
+    # Up neighbor (treat domain edge as 0)
+    has_zero_nbr[1:, :] |= (b[:-1, :] == 0)
+    has_zero_nbr[0, :] = True
+    # Down
+    has_zero_nbr[:-1, :] |= (b[1:, :] == 0)
+    has_zero_nbr[-1, :] = True
+    # Left
+    has_zero_nbr[:, 1:] |= (b[:, :-1] == 0)
+    has_zero_nbr[:, 0] = True
+    # Right
+    has_zero_nbr[:, :-1] |= (b[:, 1:] == 0)
+    has_zero_nbr[:, -1] = True
+    return ((b == 1) & has_zero_nbr).astype(np.int8)
+
+
+def _renyi_dimension_from_set(
+    set_arrays: list[NDArray],
+    q_arr: NDArray,
+    box_sizes: NDArray,
+    box_origin_shift: tuple[float, float],
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Core Rényi-dimension routine: count 1-pixels per box, fit slopes.
+
+    Parameters
+    ----------
+    set_arrays : list of int8 arrays
+        Binary arrays where 1 = pixel in the set being measured. The caller
+        is responsible for whatever preprocessing turns the user's input into
+        a "set" (e.g. one-sided edge mask for ``set='edge'``).
+    q_arr : np.ndarray
+        1-D array of Rényi orders.
+    box_sizes : np.ndarray
+        Integer box sizes (in pixels), already filtered to be valid for the
+        input shapes.
+    box_origin_shift : tuple of float
+        ``(sx, sy)`` fractional shifts of the box grid origin, in units of
+        the current box size.
+
+    Returns
+    -------
+    D_q : np.ndarray, shape (len(q_arr),)
+        Estimated Rényi dimension for each ``q``.
+    err : np.ndarray, shape (len(q_arr),)
+        95% CI half-width for each estimate.
+    partition : np.ndarray, shape (len(q_arr), len(box_sizes))
+        ``Z_q^(p)(eps)`` for q != 1, ``-S_1(eps)`` for q == 1, in the same
+        order as ``q_arr``. Useful for plotting and diagnostics.
+    """
+    nq = q_arr.shape[0]
+    nb = box_sizes.shape[0]
+    partition = np.full((nq, nb), np.nan, dtype=np.float64)
+
+    sx, sy = box_origin_shift
+
+    for k, factor in enumerate(box_sizes):
+        factor = int(factor)
+        # Pool box counts and total interior pixels across the ensemble
+        pooled_n: list[NDArray] = []
+        V_total = 0  # total interior pixel area summed across arrays
+        for arr in set_arrays:
+            sy_pix = int(round(sy * factor))
+            sx_pix = int(round(sx * factor))
+            shifted = arr[sy_pix:, sx_pix:]
+            h_full = (shifted.shape[0] // factor) * factor
+            w_full = (shifted.shape[1] // factor) * factor
+            if h_full == 0 or w_full == 0:
+                continue
+            trimmed = shifted[:h_full, :w_full]
+            if not trimmed.flags['C_CONTIGUOUS']:
+                trimmed = np.ascontiguousarray(trimmed)
+            box_counts = _box_sum_2d(trimmed, factor)
+            pooled_n.append(box_counts.ravel())
+            V_total += h_full * w_full
+
+        if not pooled_n or V_total == 0:
+            continue
+
+        n = np.concatenate(pooled_n)
+        n_sum = float(n.sum())
+        if n_sum <= 0:
+            continue
+
+        for qi in range(nq):
+            q = float(q_arr[qi])
+            if abs(q - 1.0) < 1e-10:
+                # Entropy form: requires probability normalization (sum = 1).
+                # Use log10 so the slope vs log10(eps) is directly -D_1.
+                p = n[n > 0] / n_sum
+                S1 = -float(np.sum(p * np.log10(p)))
+                partition[qi, k] = S1
+            else:
+                # Geometric / interior-pixel-area normalization.
+                # Z_q = sum_i (n_i / V) ** q
+                if q <= 0:
+                    n_pos = n[n > 0]
+                    Zq = float(np.sum((n_pos / V_total) ** q))
+                else:
+                    Zq = float(np.sum((n / V_total) ** q))
+                partition[qi, k] = Zq
+
+    # Fit slopes
+    log_eps = np.log10(box_sizes.astype(np.float64))
+    D_q = np.full(nq, np.nan, dtype=np.float64)
+    err = np.full(nq, np.nan, dtype=np.float64)
+    for qi in range(nq):
+        q = float(q_arr[qi])
+        y = partition[qi].copy()
+        if abs(q - 1.0) < 1e-10:
+            # S_1 itself is linear in log_eps with slope -D_1.
+            yfit = y
+        else:
+            # Z_q is non-negative; log it.
+            yfit = np.where(y > 0, np.log10(y), np.nan)
+        (slope, _), (slope_err, _) = linear_regression(log_eps, yfit)
+        if not np.isfinite(slope):
+            continue
+        if abs(q - 1.0) < 1e-10:
+            D_q[qi] = -slope
+            err[qi] = slope_err
+        else:
+            D_q[qi] = slope / (q - 1.0)
+            err[qi] = slope_err / abs(q - 1.0)
+
+    return D_q, err, partition
+
+
+def ensemble_renyi_dimension(
+    binary_arrays: NDArray | list[NDArray],
+    q: float | NDArray = 0.0,
+    set: str = 'edge',
+    box_sizes: str | NDArray = 'default',
+    min_pixels: int = 1,
+    min_box_size: int = 2,
+    box_origin_shift: tuple[float, float] = (0.0, 0.0),
+    return_values: bool = False,
+):
+    """Calculate the generalized Rényi dimension D_q of binary arrays.
+
+    The Rényi dimensions form a one-parameter family of fractal dimensions
+    indexed by an order ``q``, generalizing the box-counting dimension
+    (``q=0``), information dimension (``q=1``), and correlation dimension
+    (``q=2``). For a scale-invariant set, the partition function
+
+    .. math::
+        Z_q(\\varepsilon) = \\sum_i p_i^q \\propto \\varepsilon^{(q-1) D_q}
+
+    where ``p_i`` is the (probability or density) measure of the set in box
+    ``i`` of size ``\\varepsilon``. The slope of ``log Z_q`` vs
+    ``log \\varepsilon`` is ``(q-1) D_q``. At ``q=1`` the formula has a
+    removable singularity that resolves to the Shannon entropy form
+    ``S_1 = -sum p_i log p_i``, which scales as ``-D_1 log \\varepsilon``.
+
+    For monofractal sets (e.g. level sets of fractional Brownian motion),
+    ``D_q`` is constant in ``q``. For multifractal sets, ``D_q`` is a
+    monotonically decreasing function of ``q`` whose values quantify the
+    distribution's heterogeneity at different moment orders.
+
+    Parameters
+    ----------
+    binary_arrays : np.ndarray or list of np.ndarray
+        2D binary arrays. May contain 0/1 integers, booleans, or floats.
+    q : float or np.ndarray, default=0.0
+        Rényi order(s). May be a scalar or a 1-D array of values. ``q=0``
+        gives the box-counting dimension; ``q=1`` gives the information
+        dimension; ``q=2`` gives the correlation dimension.
+    set : {'edge', 'ones'}, default='edge'
+        Which set is being measured.
+
+        * ``'edge'``: the boundary of the binary array, computed as a
+          one-sided 4-connected edge mask (1-pixels that have at least one
+          0-neighbor; pixels on the array border count as having a "0
+          neighbor" outside the domain).
+        * ``'ones'``: the set of 1-pixels themselves, no preprocessing.
+    box_sizes : 'default' or array-like, default='default'
+        Integer box sizes in pixels. If 'default', powers of 2 from
+        ``min_box_size`` up to the largest size that satisfies ``min_pixels``.
+    min_pixels : int, default=1
+        Largest box size, in units of the number of boxes required to cover
+        the smaller array dimension.
+    min_box_size : int, default=2
+        Smallest box size in pixels.
+    box_origin_shift : tuple of (float, float), default=(0.0, 0.0)
+        Fractional shift ``(sx, sy)`` of the box-grid origin, in units of
+        the current box size. At each box size ``factor``, the actual
+        integer pixel shift is ``int(round(sx * factor))`` along x and
+        ``int(round(sy * factor))`` along y. Used to probe sensitivity to
+        the box-grid alignment.
+    return_values : bool, default=False
+        If True, also return the partition function values used in the fit.
+
+    Returns
+    -------
+    D_q : float or np.ndarray
+        Estimated Rényi dimension. Scalar if ``q`` was scalar, array
+        otherwise.
+    err : float or np.ndarray
+        95% CI half-width for the estimate(s).
+    box_sizes : np.ndarray, optional
+        The box sizes used. Returned only if ``return_values=True``.
+    partition : np.ndarray, optional
+        The partition function values: ``Z_q^(p)(eps)`` for ``q != 1`` (with
+        geometric normalization ``p_i = n_i / V``, where ``V`` is the total
+        interior pixel area at this ``eps``), and the Shannon entropy
+        ``S_1(eps)`` for ``q == 1``. Shape ``(len(q), len(box_sizes))`` if
+        ``q`` is array, ``(len(box_sizes),)`` if scalar. Returned only if
+        ``return_values=True``.
+
+    Notes
+    -----
+    **Interior boxes only.** Boxes that would extend past the domain edge
+    are not counted. The function trims each input array to a multiple of
+    the current box size (after applying any ``box_origin_shift``) and
+    discards the remainder. This matches the philosophy of
+    ``ensemble_correlation_dimension(interior_circles_only=True)``.
+
+    **Normalization.** For ``q != 1``, ``p_i = n_i / V(\\varepsilon)`` where
+    ``V`` is the total interior pixel area at this box size — a purely
+    geometric normalization that removes coverage-fluctuation bias from the
+    fitted slope. For ``q == 1``, the Shannon entropy requires probability
+    normalization ``p_i = n_i / sum_j n_j``; the two coincide for
+    uniform-density fields.
+
+    **Boundary convention for** ``set='edge'``. The edge mask is one-sided:
+    a pixel is in the edge set iff it is 1 and has at least one 0-neighbor.
+    This differs slightly from the convention used by older versions of
+    ``ensemble_box_dimension``, which counted a coarsened cell as "edge"
+    iff it contained both 0s and 1s.
+
+    See Also
+    --------
+    ensemble_box_dimension : Equivalent to ``q=0``.
+    ensemble_information_dimension : Equivalent to ``q=1``.
+    ensemble_correlation_dimension : Theoretically equivalent to ``q=2`` for
+        the same set, computed via the Grassberger-Procaccia pairwise method.
+    """
+    # Normalize inputs
+    if isinstance(binary_arrays, np.ndarray):
+        binary_arrays = [binary_arrays]
+    if len(binary_arrays) == 0:
+        raise ValueError('binary_arrays must be non-empty')
+
+    if np.any([np.any(np.isnan(arr)) for arr in binary_arrays]):
+        raise ValueError('arrays must not contain NaN values')
+
+    if set not in ('edge', 'ones'):
+        raise ValueError(f'set={set!r} not supported (supported values are "edge" or "ones")')
+
+    q_scalar = np.isscalar(q)
+    q_arr = np.atleast_1d(np.asarray(q, dtype=np.float64))
+
+    # Resolve box_sizes (mirrors ensemble_box_dimension)
+    if isinstance(box_sizes, str):
+        if box_sizes != 'default':
+            raise ValueError(f'box_sizes={box_sizes} not supported')
+        box_sizes_arr = 2 ** np.arange(1, 15)
+    else:
+        box_sizes_arr = np.asarray(box_sizes)
+    max_factor = min(binary_arrays[0].shape) / max(min_pixels, 1)
+    box_sizes_arr = box_sizes_arr[box_sizes_arr <= max_factor]
+    box_sizes_arr = box_sizes_arr[box_sizes_arr >= min_box_size]
+    box_sizes_arr = np.unique(box_sizes_arr.astype(np.int64))
+    if box_sizes_arr.size < 3:
+        raise ValueError(
+            f'Need at least 3 valid box sizes for a slope fit, got {box_sizes_arr.size}. '
+            f'Reduce min_box_size or min_pixels, or pass an explicit box_sizes array.'
+        )
+
+    # Build the set arrays
+    set_arrays: list[NDArray] = []
+    for arr in binary_arrays:
+        if arr.ndim != 2:
+            raise ValueError('binary_arrays must be 2-dimensional')
+        if set == 'ones':
+            set_arrays.append((np.asarray(arr) > 0).astype(np.int8))
+        else:  # 'edge'
+            set_arrays.append(_one_sided_edge_mask(np.asarray(arr) > 0))
+
+    D_q, err, partition = _renyi_dimension_from_set(
+        set_arrays, q_arr, box_sizes_arr, box_origin_shift
+    )
+
+    if q_scalar:
+        D_q_out = float(D_q[0])
+        err_out = float(err[0])
+        partition_out = partition[0]
+    else:
+        D_q_out = D_q
+        err_out = err
+        partition_out = partition
+
+    if return_values:
+        return D_q_out, err_out, box_sizes_arr, partition_out
+    return D_q_out, err_out
+
+
 def ensemble_box_dimension(
     binary_arrays: NDArray | list[NDArray],
     set: str = 'edge',
@@ -421,8 +740,9 @@ def ensemble_box_dimension(
     """
     Calculate the ensemble box-counting dimension of binary arrays.
 
-    Estimates the box-counting dimension (also known as Minkowski-Bouligand dimension)
-    for a list of binary arrays. It averages the results across multiple arrays.
+    Equivalent to ``ensemble_renyi_dimension(..., q=0)``. Kept as a
+    convenience wrapper because box counting is the most familiar special
+    case.
 
     Parameters
     ----------
@@ -430,8 +750,9 @@ def ensemble_box_dimension(
         A list of 2D binary arrays or a single 2D binary array.
     set : str, default='edge'
         Specifies which set to consider for box counting:
-        - 'edge': Box dimension of the set of boundaries between 0 and 1.
-        - 'ones': Box dimension of the set of values equal to 1.
+        - 'edge': Box dimension of the set of boundaries (1-pixels with at
+          least one 0-neighbor).
+        - 'ones': Box dimension of the set of 1-pixels.
     min_pixels : int, default=1
         Largest box size, in units of the number of boxes required to cover the
         array in the smaller direction.
@@ -451,65 +772,89 @@ def ensemble_box_dimension(
         The error of the estimate.
     box_sizes : np.ndarray, optional
         Box sizes used. Only returned if return_values=True.
-    mean_number_boxes : np.ndarray, optional
-        Mean box counts. Only returned if return_values=True.
+    number_boxes : np.ndarray, optional
+        Number of nonempty boxes (pooled across the input ensemble) at each
+        box size. Only returned if return_values=True.
 
     Raises
     ------
     ValueError
-        If an unsupported value is provided for 'set' or if arrays contain NaN values.
-
-    Notes
-    -----
-    The function uses linear regression on log-log plot of box counts vs. scale
-    to estimate the box-counting dimension. The slope of this regression gives
-    the negative of the box-counting dimension.
+        If an unsupported value is provided for 'set' or if arrays contain NaN
+        values.
     """
-    if isinstance(binary_arrays, np.ndarray):
-        binary_arrays = [binary_arrays]
+    return ensemble_renyi_dimension(
+        binary_arrays,
+        q=0.0,
+        set=set,
+        box_sizes=box_sizes,
+        min_pixels=min_pixels,
+        min_box_size=min_box_size,
+        return_values=return_values,
+    )
 
-    if np.any(np.isnan(binary_arrays)):
-        raise ValueError('arrays must not contain NaN values')
 
-    if isinstance(box_sizes, str):
-        if box_sizes != 'default':
-            raise ValueError(f'box_sizes={box_sizes} not supported')
-        box_sizes = 2 ** np.arange(1, 15)  # assumed any array is smaller than 32768 pixels
-    else:
-        box_sizes = np.array(box_sizes)
+def ensemble_information_dimension(
+    binary_arrays: NDArray | list[NDArray],
+    set: str = 'edge',
+    min_pixels: int = 1,
+    min_box_size: int = 2,
+    box_sizes: str | NDArray = 'default',
+    return_values: bool = False
+) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
+    """
+    Calculate the ensemble information dimension of binary arrays.
 
-    max_coarsening_factor = min(binary_arrays[0].shape) / min_pixels
-    box_sizes = box_sizes[box_sizes <= max_coarsening_factor]
-    box_sizes = box_sizes[box_sizes >= min_box_size]
+    Equivalent to ``ensemble_renyi_dimension(..., q=1)``. The information
+    dimension is the ``q=1`` member of the Rényi-dimension family, defined
+    via the Shannon entropy of the box-mass distribution rather than a
+    moment of the count: as ``eps -> 0``,
 
-    mean_number_boxes = np.empty((0, box_sizes.size), dtype=np.float32)
+    .. math::
+        S_1(\\varepsilon) = -\\sum_i p_i \\log p_i \\sim -D_1 \\log\\varepsilon,
 
-    for array in binary_arrays:
-        number_boxes = []
-        for factor in box_sizes:
-            # Coarsen
-            coarsened_array = encase_in_value(coarsen_array(array, factor), np.nan)
+    where ``p_i = n_i / sum_j n_j`` is the probability that a randomly
+    chosen set point lies in box ``i``. The information dimension is the
+    ``q -> 1`` limit of the Rényi family; it has to be computed via the
+    entropy form because the moment-based formula has a removable
+    singularity at ``q=1``.
 
-            # Count boxes
-            if set == 'edge':
-                nboxes = np.count_nonzero((coarsened_array > 0) & (coarsened_array < 1))
-            elif set == 'ones':
-                nboxes = np.count_nonzero(coarsened_array > 0)
-            else:
-                raise ValueError(f'set={set} not supported (supported values are "edge" or "ones")')
+    Parameters
+    ----------
+    binary_arrays : list of np.ndarray or np.ndarray
+        A list of 2D binary arrays or a single 2D binary array.
+    set : str, default='edge'
+        Which set to measure. See :func:`ensemble_renyi_dimension`.
+    min_pixels, min_box_size, box_sizes, return_values
+        Same as :func:`ensemble_box_dimension`.
 
-            number_boxes.append(nboxes)
+    Returns
+    -------
+    dimension : float
+        The estimated information dimension.
+    error : float
+        The 95% CI half-width.
+    box_sizes : np.ndarray, optional
+        Box sizes used. Only returned if return_values=True.
+    entropy : np.ndarray, optional
+        Shannon entropy ``S_1(eps)`` (in log10) at each box size, pooled
+        over the input ensemble. Only returned if return_values=True.
 
-        mean_number_boxes = np.append(mean_number_boxes, [number_boxes], axis=0)
-
-    mean_number_boxes = np.mean(mean_number_boxes, axis=0)
-    mean_number_boxes[mean_number_boxes == 0] = np.nan  # eliminate warning when logging 0
-
-    (slope, _), (error, _) = linear_regression(np.log10(box_sizes), np.log10(mean_number_boxes))
-
-    if return_values:
-        return -slope, error, box_sizes, mean_number_boxes
-    return -slope, error
+    See Also
+    --------
+    ensemble_renyi_dimension : The general Rényi family for arbitrary ``q``.
+    ensemble_box_dimension : The ``q=0`` special case.
+    ensemble_correlation_dimension : Theoretically equivalent to ``q=2``,
+        computed via the Grassberger-Procaccia pairwise method.
+    """
+    return ensemble_renyi_dimension(
+        binary_arrays,
+        q=1.0,
+        set=set,
+        box_sizes=box_sizes,
+        min_pixels=min_pixels,
+        min_box_size=min_box_size,
+        return_values=return_values,
+    )
 
 
 def ensemble_coarsening_dimension(
