@@ -32,6 +32,32 @@ __all__ = [
 ]
 
 
+@numba.njit(parallel=True, fastmath=True, cache=True)
+def _box_sum_2d(arr: NDArray, factor: int) -> NDArray:
+    """Sum a 2D array into ``(h//factor, w//factor)`` boxes of size ``factor``.
+
+    Parallel over output rows; each thread reads a contiguous strip of input
+    rows so the inner loop runs against private L2 (no strided cache aliasing
+    on Zen 5, no thread contention). Caller is responsible for trimming the
+    input so ``arr.shape[0]`` and ``arr.shape[1]`` are exact multiples of
+    ``factor``.
+    """
+    h, w = arr.shape
+    out_h = h // factor
+    out_w = w // factor
+    out = np.zeros((out_h, out_w), dtype=np.int64)
+    for i in numba.prange(out_h):
+        i0 = i * factor
+        for j in range(out_w):
+            j0 = j * factor
+            s = 0
+            for di in range(factor):
+                for dj in range(factor):
+                    s += arr[i0 + di, j0 + dj]
+            out[i, j] = s
+    return out
+
+
 def ensemble_correlation_dimension(
     arrays: NDArray | list[NDArray],
     x_sizes: NDArray | None = None,
