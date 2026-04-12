@@ -5,6 +5,7 @@ from numpy.typing import NDArray
 import numba
 from numba.typed import List
 from scipy.ndimage import label
+import warnings
 from warnings import warn
 from ._object_analysis import (
     label_structures,
@@ -13,6 +14,7 @@ from ._object_analysis import (
     remove_structure_holes,
     get_structure_areas,
     get_structure_perimeters,
+    get_structure_height_width,
 )
 from ._utils import linear_regression, encase_in_value
 
@@ -1254,22 +1256,36 @@ def ensemble_coarsening_dimension(
     return 1 - slope, error
 
 
+_UNSET = object()
+
+_INDIVIDUAL_METHODS = {
+    'filled perimeter vs filled area',
+    'summed perimeter vs unfilled area',
+    'filled perimeter vs width',
+    'filled perimeter vs height',
+    'summed perimeter vs width',
+    'summed perimeter vs height',
+}
+
+
 def individual_fractal_dimension(
     arrays: NDArray | list[NDArray],
     x_sizes: NDArray | list[NDArray] | None = None,
     y_sizes: NDArray | list[NDArray] | None = None,
-    min_a: float = 10,
-    max_a: float = np.inf,
+    min_length_scale: float = _UNSET,
+    max_length_scale: float = _UNSET,
     bins: int | None = 30,
     return_values: bool = False,
-    filled: bool = True,
+    method: str = _UNSET,
+    filled: bool = _UNSET,
+    min_a: float = _UNSET,
+    max_a: float = _UNSET,
 ) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
     """
     Calculate the individual fractal dimension Df of objects within arrays.
 
-    The method uses linear regression on log a vs. log p, omitting structures
-    touching the array edge. By default, interior holes are filled before
-    computing areas and perimeters (see ``filled``).
+    The method uses linear regression on log(length scale) vs. log(perimeter),
+    omitting structures touching the array edge.
 
     Parameters
     ----------
@@ -1283,20 +1299,43 @@ def individual_fractal_dimension(
         Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
         If np.ndarray, use these for each array in 'arrays'. If list, assume
         y_sizes[i] corresponds to arrays[i].
-    min_a : float, default=10
-        Minimum structure area to include in calculation.
-    max_a : float, default=np.inf
-        Maximum structure area to include in calculation.
+    min_length_scale : float, default=3
+        Minimum length scale to include. Filters on the x-axis quantity:
+        sqrt(area) for area methods, width or height for those methods.
+    max_length_scale : float, default=np.inf
+        Maximum length scale to include.
     bins : int or None, default=30
-        Number of bins along log10(sqrt(area)) for averaging. The regression
-        is performed on the bin-averaged values. If None, fit on all individual
-        points without binning.
+        Number of bins along the log10 length scale for averaging. The
+        regression is performed on the bin-averaged values. If None, fit on
+        all individual points without binning.
     return_values : bool, default=False
         If True, return additional data used in the calculation.
-    filled : bool, default=True
-        If True, fill interior holes in structures before computing areas and
-        perimeters. If False, holes are left as-is, so perimeters include
-        interior boundaries and areas exclude hole pixels.
+    method : str, default='filled perimeter vs filled area'
+        Which perimeter and length-scale combination to use. Options:
+
+        - ``'filled perimeter vs filled area'``: fill holes, regress
+          log(perimeter) vs log(sqrt(area)). Default.
+        - ``'summed perimeter vs unfilled area'``: no hole filling, perimeter
+          includes inner boundaries, area excludes holes.
+        - ``'filled perimeter vs width'``: fill holes, regress log(perimeter)
+          vs log(bounding-box width).
+        - ``'filled perimeter vs height'``: fill holes, regress log(perimeter)
+          vs log(bounding-box height).
+        - ``'summed perimeter vs width'``: no hole filling, regress
+          log(perimeter) vs log(bounding-box width).
+        - ``'summed perimeter vs height'``: no hole filling, regress
+          log(perimeter) vs log(bounding-box height).
+    filled : bool, optional
+        .. deprecated::
+            Use ``method`` instead. ``filled=True`` maps to
+            ``'filled perimeter vs filled area'``; ``filled=False`` maps to
+            ``'summed perimeter vs unfilled area'``.
+    min_a : float, optional
+        .. deprecated::
+            Use ``min_length_scale`` instead. Converted via ``sqrt(min_a)``.
+    max_a : float, optional
+        .. deprecated::
+            Use ``max_length_scale`` instead. Converted via ``sqrt(max_a)``.
 
     Returns
     -------
@@ -1304,8 +1343,8 @@ def individual_fractal_dimension(
         The individual fractal dimension.
     uncertainty : float
         Uncertainty estimate (95% confidence).
-    log10_sqrt_a : np.ndarray, optional
-        Log10 of sqrt(area) values (bin centers if bins is not None).
+    log10_length_scale : np.ndarray, optional
+        Log10 of the length-scale values (bin centers if bins is not None).
         Only returned if return_values=True.
     log10_p : np.ndarray, optional
         Log10 of perimeter values (bin means if bins is not None).
@@ -1314,9 +1353,62 @@ def individual_fractal_dimension(
     Raises
     ------
     ValueError
-        If array shapes don't match pixel size shapes.
+        If array shapes don't match pixel size shapes, if an invalid method
+        is given, or if deprecated and new parameters are mixed.
     """
-    areas, perimeters = [], []
+    # --- resolve deprecated 'filled' parameter ---
+    if filled is not _UNSET and method is not _UNSET:
+        raise ValueError("Cannot pass both 'filled' and 'method'.")
+    if filled is not _UNSET:
+        warnings.warn(
+            "The 'filled' parameter is deprecated. Use method='filled perimeter"
+            " vs filled area' or method='summed perimeter vs unfilled area'.",
+            DeprecationWarning, stacklevel=2,
+        )
+        method = ('filled perimeter vs filled area' if filled
+                  else 'summed perimeter vs unfilled area')
+    elif method is _UNSET:
+        method = 'filled perimeter vs filled area'
+
+    if method not in _INDIVIDUAL_METHODS:
+        raise ValueError(
+            f"method={method!r} not recognized. Supported methods: "
+            + ', '.join(sorted(_INDIVIDUAL_METHODS))
+        )
+
+    # --- resolve deprecated min_a / max_a ---
+    if min_a is not _UNSET and min_length_scale is not _UNSET:
+        raise ValueError("Cannot pass both 'min_a' and 'min_length_scale'.")
+    if max_a is not _UNSET and max_length_scale is not _UNSET:
+        raise ValueError("Cannot pass both 'max_a' and 'max_length_scale'.")
+    if min_a is not _UNSET:
+        warnings.warn(
+            "The 'min_a' parameter is deprecated. Use 'min_length_scale' instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        min_length_scale = np.sqrt(min_a)
+    if max_a is not _UNSET:
+        warnings.warn(
+            "The 'max_a' parameter is deprecated. Use 'max_length_scale' instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        max_length_scale = np.sqrt(max_a)
+    if min_length_scale is _UNSET:
+        min_length_scale = 3
+    if max_length_scale is _UNSET:
+        max_length_scale = np.inf
+
+    # --- parse method ---
+    fill_holes = method.startswith('filled perimeter')
+    if 'vs filled area' in method or 'vs unfilled area' in method:
+        length_scale_type = 'sqrt_area'
+    elif 'vs width' in method:
+        length_scale_type = 'width'
+    else:
+        length_scale_type = 'height'
+
+    # --- collect per-structure data ---
+    length_scales, perimeters = [], []
     if not isinstance(arrays, list):
         arrays = [arrays]
 
@@ -1340,41 +1432,49 @@ def individual_fractal_dimension(
             raise ValueError('Each array shape must match corresponding pixel sizes shape')
 
         array = remove_structures_touching_border_nan(array)
-        if filled:
+        if fill_holes:
             array = remove_structure_holes(array)
         lab, nm, nl = label_structures(array, wrap='both')
         if lab is None:
             continue
-        new_a = get_structure_areas(lab, nm, nl, xs, ys)
+
         new_p = get_structure_perimeters(lab, nm, nl, xs, ys)
-        # Filter out labels with zero area or zero perimeter (e.g. NaN-surrounded)
-        valid = (new_a > 0) & (new_p > 0)
-        areas.extend(new_a[valid])
+        if length_scale_type == 'sqrt_area':
+            new_a = get_structure_areas(lab, nm, nl, xs, ys)
+            new_ls = np.sqrt(new_a)
+            valid = (new_a > 0) & (new_p > 0)
+        else:
+            heights, widths = get_structure_height_width(lab, nm, nl, xs, ys)
+            new_ls = widths if length_scale_type == 'width' else heights
+            valid = (new_ls > 0) & (new_p > 0)
+
+        length_scales.extend(new_ls[valid])
         perimeters.extend(new_p[valid])
 
-    areas, perimeters = np.array(areas), np.array(perimeters)
-    mask = (areas > min_a) & (areas < max_a)
-    areas, perimeters = areas[mask], perimeters[mask]
+    length_scales = np.array(length_scales)
+    perimeters = np.array(perimeters)
+    mask = (length_scales > min_length_scale) & (length_scales < max_length_scale)
+    length_scales, perimeters = length_scales[mask], perimeters[mask]
 
-    log_sqrt_a = np.log10(np.sqrt(areas))
+    log_ls = np.log10(length_scales)
     log_p = np.log10(perimeters)
 
     if bins is not None:
-        bin_edges = np.linspace(log_sqrt_a.min(), log_sqrt_a.max(), bins + 1)
-        bin_indices = np.digitize(log_sqrt_a, bin_edges) - 1
+        bin_edges = np.linspace(log_ls.min(), log_ls.max(), bins + 1)
+        bin_indices = np.digitize(log_ls, bin_edges) - 1
         bin_indices = np.clip(bin_indices, 0, bins - 1)
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
         bin_means = np.array([log_p[bin_indices == i].mean()
                               if np.any(bin_indices == i) else np.nan
                               for i in range(bins)])
         valid = np.isfinite(bin_means)
-        log_sqrt_a = bin_centers[valid]
+        log_ls = bin_centers[valid]
         log_p = bin_means[valid]
 
-    (slope, _), (err, _) = linear_regression(log_sqrt_a, log_p)
+    (slope, _), (err, _) = linear_regression(log_ls, log_p)
 
     if return_values:
-        return slope, err, log_sqrt_a, log_p
+        return slope, err, log_ls, log_p
     else:
         return slope, err
 
@@ -1733,14 +1833,16 @@ def label_size(
     Label structures with their size values.
 
     Creates a labelled array where each structure is labelled with its size
-    (area, perimeter, width, or height) instead of a unique identifier.
+    (area, summed perimeter, width, or height) instead of a unique identifier.
 
     Parameters
     ----------
     array : np.ndarray
         Binary array of structures: 2-d array, padded with 0's or np.nan's.
     variable : str, default='area'
-        Which variable to use for 'size'. Options: 'area', 'perimeter', 'width', 'height'.
+        Which variable to use for 'size'. Options: ``'area'``,
+        ``'summed perimeter'``, ``'width'``, ``'height'``.
+        ``'perimeter'`` is accepted but deprecated.
     wrap : str or None, default='both'
         Boundary wrapping options: None, 'sides', 'both'.
         If 'sides', connect structures that span the left/right edge.
@@ -1769,8 +1871,14 @@ def label_size(
     binary = np.where(np.isnan(array), 0, array).astype(bool)
     labelled_array, n_structures = label(binary, output=np.float32)
 
-    if variable not in ['area', 'perimeter', 'width', 'height']:
-        raise ValueError(f'variable={variable} not supported (supported values are "area", "perimeter", "width", "height")')
+    if variable == 'perimeter':
+        warnings.warn(
+            "variable='perimeter' is deprecated, use 'summed perimeter' instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        variable = 'summed perimeter'
+    if variable not in ['area', 'summed perimeter', 'width', 'height']:
+        raise ValueError(f'variable={variable} not supported (supported values are "area", "summed perimeter", "width", "height")')
 
     if x_sizes is None:
         x_sizes = np.ones_like(labelled_array)
@@ -1874,7 +1982,7 @@ def _label_size_helper(labelled_array, separated_structure_indices, labelled_wit
             area += y_sizes[i, j] * x_sizes[i, j]
 
         for (i, j) in indices:
-            if variable == 'perimeter':
+            if variable == 'summed perimeter':
                 labelled_with_sizes[i, j] = perimeter
             elif variable == 'area':
                 labelled_with_sizes[i, j] = area

@@ -361,7 +361,7 @@ def test_size_distribution(seed='3x3_center', iterations=None, tolerance=0.001):
     # Test all metrics
     metrics = {
         'area': beta_area,
-        'perimeter': beta_length,
+        'summed perimeter': beta_length,
         'height': beta_length,
         'width': beta_length,
     }
@@ -453,7 +453,7 @@ def test_individual_fractal_dimension_nan_surrounded(tolerance=0.01):
     expected_D = 1.0
 
     # Unbinned
-    dim, error = objscale.individual_fractal_dimension([arr], min_a=1, bins=None)
+    dim, error = objscale.individual_fractal_dimension([arr], min_length_scale=1, bins=None)
 
     diff = abs(dim - expected_D)
     passed = diff < tolerance
@@ -466,7 +466,7 @@ def test_individual_fractal_dimension_nan_surrounded(tolerance=0.01):
     )
 
     # Binned
-    dim_b, error_b = objscale.individual_fractal_dimension([arr], min_a=1, bins=1000)
+    dim_b, error_b = objscale.individual_fractal_dimension([arr], min_length_scale=1, bins=1000)
 
     diff_b = abs(dim_b - expected_D)
     passed_b = diff_b < tolerance
@@ -834,6 +834,125 @@ def test_correlation_dimension_maxlength_too_large():
         print(f"  correlation_dimension_maxlength_too_large: correctly raised ValueError, PASS")
 
 
+def test_individual_fractal_dimension_methods(seed='3x3_center', iterations=None, tolerance=0.01):
+    """
+    Test all individual_fractal_dimension method strings.
+
+    For squares: P = 4*side, A = side^2, W = side, H = side.
+    So log(P) vs log(sqrt(A)) slope = 1, log(P) vs log(W) slope = 1,
+    log(P) vs log(H) slope = 1.
+    """
+    if iterations is None:
+        iterations = default_iterations(seed)
+    expected_D = 1.0
+    fractal = generate_fractal(seed=seed, iterations=iterations)
+
+    methods = [
+        'filled perimeter vs filled area',
+        'summed perimeter vs unfilled area',
+        'filled perimeter vs width',
+        'filled perimeter vs height',
+        'summed perimeter vs width',
+        'summed perimeter vs height',
+    ]
+
+    for method in methods:
+        dim, error = objscale.individual_fractal_dimension(
+            [fractal], bins=None, method=method
+        )
+        diff = abs(dim - expected_D)
+        passed = diff < tolerance
+        status = "PASS" if passed else "FAIL"
+        print(f"  individual_fractal_dimension method='{method}' ({seed}): "
+              f"expected={expected_D:.4f}, actual={dim:.4f}, {status}")
+        assert passed, (
+            f"method='{method}': {dim:.4f} differs from expected "
+            f"{expected_D:.4f} by more than {tolerance}"
+        )
+
+
+def test_individual_fractal_dimension_deprecations():
+    """Test that deprecated parameters work with warnings and that conflicts raise."""
+    import warnings as _warnings
+
+    fractal = generate_fractal(seed='3x3_center', iterations=default_iterations('3x3_center'))
+
+    # filled=True should still work but warn
+    with _warnings.catch_warnings(record=True) as w:
+        _warnings.simplefilter("always")
+        dim, _ = objscale.individual_fractal_dimension([fractal], filled=True, bins=None)
+        dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert len(dep_warns) >= 1, "filled=True should emit DeprecationWarning"
+    assert abs(dim - 1.0) < 0.01
+    print("  individual_fractal_dimension filled=True deprecation: PASS")
+
+    # min_a should still work but warn
+    with _warnings.catch_warnings(record=True) as w:
+        _warnings.simplefilter("always")
+        dim, _ = objscale.individual_fractal_dimension([fractal], min_a=10, bins=None)
+        dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert len(dep_warns) >= 1, "min_a should emit DeprecationWarning"
+    print("  individual_fractal_dimension min_a deprecation: PASS")
+
+    # Conflicting filled + method should raise
+    try:
+        objscale.individual_fractal_dimension(
+            [fractal], filled=True, method='filled perimeter vs width'
+        )
+        raise AssertionError("Expected ValueError for filled + method")
+    except ValueError:
+        pass
+    print("  individual_fractal_dimension filled+method conflict: PASS")
+
+    # Conflicting min_a + min_length_scale should raise
+    try:
+        objscale.individual_fractal_dimension(
+            [fractal], min_a=10, min_length_scale=3
+        )
+        raise AssertionError("Expected ValueError for min_a + min_length_scale")
+    except ValueError:
+        pass
+    print("  individual_fractal_dimension min_a+min_length_scale conflict: PASS")
+
+    # Bad method string should raise
+    try:
+        objscale.individual_fractal_dimension([fractal], method='nonsense')
+        raise AssertionError("Expected ValueError for bad method")
+    except ValueError:
+        pass
+    print("  individual_fractal_dimension bad method string: PASS")
+
+
+def test_perimeter_variable_deprecation():
+    """Test that variable='perimeter' emits DeprecationWarning and 'summed perimeter' doesn't."""
+    import warnings as _warnings
+    fractal = generate_fractal(seed='3x3_center', iterations=default_iterations('3x3_center'))
+
+    # 'perimeter' should warn
+    with _warnings.catch_warnings(record=True) as w:
+        _warnings.simplefilter("always")
+        exp_old, err_old = objscale.finite_array_powerlaw_exponent(
+            [fractal], 'perimeter', bins=10000, min_threshold=10, min_count_threshold=1
+        )
+        dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert len(dep_warns) >= 1, "'perimeter' should emit DeprecationWarning"
+
+    # 'summed perimeter' should not warn
+    with _warnings.catch_warnings(record=True) as w:
+        _warnings.simplefilter("always")
+        exp_new, err_new = objscale.finite_array_powerlaw_exponent(
+            [fractal], 'summed perimeter', bins=10000, min_threshold=10, min_count_threshold=1
+        )
+        dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert len(dep_warns) == 0, "'summed perimeter' should not emit DeprecationWarning"
+
+    # Results must be identical
+    assert abs(exp_old - exp_new) < 1e-10, (
+        f"'perimeter' exponent {exp_old} != 'summed perimeter' exponent {exp_new}"
+    )
+    print("  perimeter variable deprecation: PASS")
+
+
 def run_all_tests():
     """Run all automated tests."""
     print("=" * 60)
@@ -871,6 +990,9 @@ def run_all_tests():
     # Seed-independent tests
     standalone_tests = [
         test_individual_fractal_dimension_nan_surrounded,
+        test_individual_fractal_dimension_methods,
+        test_individual_fractal_dimension_deprecations,
+        test_perimeter_variable_deprecation,
         test_individual_correlation_dimension,
         test_correlation_dimension_maxlength_too_large,
         test_ensemble_box_renyi_dimension_all_ones_analytic,
