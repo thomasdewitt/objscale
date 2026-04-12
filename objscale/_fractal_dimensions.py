@@ -97,7 +97,7 @@ def ensemble_correlation_dimension(
         Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
         This single grid is used for every array in ``arrays``.
     minlength : str or float, default='auto'
-        Minimum length scale for correlation calculation. If 'auto', uses 3 times
+        Minimum length scale for correlation calculation. If 'auto', uses 8 times
         the minimum pixel size.
     maxlength : str or float, default='auto'
         Maximum length scale for correlation calculation. If 'auto', uses 0.33 times
@@ -207,7 +207,7 @@ def individual_correlation_dimension(
     y_sizes : np.ndarray, optional
         Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
     minlength : str or float, default='auto'
-        Minimum length scale for correlation calculation. If 'auto', uses 3 times
+        Minimum length scale for correlation calculation. If 'auto', uses 8 times
         the minimum pixel size.
     maxlength : str or float, default='auto'
         Maximum length scale for correlation calculation. If 'auto', uses
@@ -467,7 +467,7 @@ def ensemble_box_renyi_dimension(
     set: str = 'edge',
     box_sizes: str | NDArray = 'default',
     max_box_size: int | None = None,
-    min_box_size: int = 2,
+    min_box_size: int = 8,
     box_origin_shift: tuple[float, float] = (0.0, 0.0),
     return_values: bool = False,
 ):
@@ -514,8 +514,9 @@ def ensemble_box_renyi_dimension(
     max_box_size : int or None, default=None
         Largest box size in pixels. If None, uses the smaller array
         dimension (i.e. the largest box that fits at all).
-    min_box_size : int, default=2
-        Smallest box size in pixels.
+    min_box_size : int, default=8
+        Smallest box size in pixels. The default of 8 keeps the fit
+        away from pixel-discretization noise at the smallest scales.
     box_origin_shift : tuple of (float, float), default=(0.0, 0.0)
         Fractional shift ``(sx, sy)`` of the box-grid origin, in units of
         the current box size. At each box size ``factor``, the actual
@@ -661,7 +662,7 @@ def ensemble_box_dimension(
     binary_arrays: NDArray | list[NDArray],
     set: str = 'edge',
     max_box_size: int | None = None,
-    min_box_size: int = 2,
+    min_box_size: int = 8,
     box_sizes: str | NDArray = 'default',
     return_values: bool = False
 ) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
@@ -683,8 +684,9 @@ def ensemble_box_dimension(
         - 'ones': Box dimension of the set of 1-pixels.
     max_box_size : int or None, default=None
         Largest box size in pixels. If None, uses the smaller array dimension.
-    min_box_size : int, default=2
-        Smallest box size in pixels.
+    min_box_size : int, default=8
+        Smallest box size in pixels. The default of 8 keeps the fit
+        away from pixel-discretization noise at the smallest scales.
     box_sizes : array-like or 'default', default='default'
         Box sizes used. If 'default', uses powers of 2 from ``min_box_size``
         up to ``max_box_size``.
@@ -887,8 +889,10 @@ def ensemble_sandbox_renyi_dimension(
     x_sizes, y_sizes : np.ndarray, optional
         Per-pixel physical sizes. If None, uniform unit pixels.
     minlength, maxlength : str or float, default='auto'
-        Distance scale range. ``'auto'`` = ``3 * min pixel size`` and
-        ``0.33 * min array dimension`` respectively.
+        Distance scale range. ``'auto'`` = ``8 * min pixel size`` and
+        ``0.33 * min array dimension`` respectively. The default
+        ``minlength`` of 8× pixel size keeps the fit away from
+        pixel-discretization noise at the smallest scales.
     interior_circles_only : bool, default=True
         If True, only sandbox centers at least ``maxlength`` from every
         domain edge contribute, avoiding boundary truncation bias.
@@ -962,7 +966,7 @@ def ensemble_sandbox_renyi_dimension(
             (locations_y[h - 1, int(w / 2)] - locations_y[0, int(w / 2)]),
         )
     if minlength == 'auto':
-        minlength = 3 * min(np.nanmin(x_sizes), np.nanmin(y_sizes))
+        minlength = 8 * min(np.nanmin(x_sizes), np.nanmin(y_sizes))
 
     # ----- validate -----
     if np.any([np.any(np.isnan(arr)) for arr in binary_arrays]):

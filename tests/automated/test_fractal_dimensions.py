@@ -818,8 +818,12 @@ def test_correlation_dimension_maxlength_too_large():
     """Test that maxlength too large for interior_circles_only raises ValueError."""
     arr = (np.random.random((64, 64)) < 0.3).astype(float)
     try:
+        # Explicit minlength=2 so the scale-ratio check (>=10) passes and
+        # we reach the interior-region validation we're trying to exercise.
+        # (Default 'auto' minlength is 8*pixel_size = 8, which would trip
+        # the scale-ratio check first on this 64x64 with maxlength=32.)
         objscale.ensemble_correlation_dimension(
-            arr, maxlength=32, interior_circles_only=True
+            arr, minlength=2, maxlength=32, interior_circles_only=True
         )
         raise AssertionError(
             "Expected ValueError for maxlength=32 on 64x64 array with "

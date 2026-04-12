@@ -95,7 +95,7 @@ objscale.ensemble_correlation_dimension(
     arrays,                      # Binary arrays (list or single)
     x_sizes=None,                # Pixel sizes in x (2D array, same shape as arrays)
     y_sizes=None,                # Pixel sizes in y
-    minlength='auto',            # Min scale (default: 3x pixel size)
+    minlength='auto',            # Min scale (default: 8x pixel size)
     maxlength='auto',            # Max scale (default: 0.33x domain size)
     interior_circles_only=True,  # Avoid boundary effects (recommended!)
     return_C_l=False,            # Return (dim, err, bins, C_l)
@@ -161,7 +161,7 @@ objscale.ensemble_box_renyi_dimension(
     set='edge',            # 'edge' (one-sided edge mask: 1-pixels with a 0-neighbor) or 'ones'
     box_sizes='default',   # Custom box sizes or 'default' (powers of 2)
     max_box_size=None,     # Largest box in pixels (None = min(arr.shape))
-    min_box_size=2,        # Smallest box in pixels
+    min_box_size=8,        # Smallest box in pixels
     box_origin_shift=(0.0, 0.0),  # Fractional (sx, sy) shift of box grid origin
     return_values=False    # Return (dim, err, box_sizes, partition)
 ) -> (D_q, err) | (D_q, err, box_sizes, partition)
@@ -174,7 +174,7 @@ objscale.ensemble_box_dimension(
     binary_arrays,         # Binary arrays (list or single)
     set='edge',            # 'edge' or 'ones'
     max_box_size=None,     # Largest box in pixels (None = min(arr.shape))
-    min_box_size=2,        # Smallest box in pixels
+    min_box_size=8,        # Smallest box in pixels
     box_sizes='default',   # Custom box sizes or 'default' (powers of 2)
     return_values=False    # Return (dim, err, box_sizes, counts)
 ) -> (D_0, err) | (D_0, err, box_sizes, n_boxes)
