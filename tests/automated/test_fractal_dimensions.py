@@ -479,7 +479,7 @@ def test_individual_fractal_dimension_nan_surrounded(tolerance=0.01):
     )
 
 
-def test_ensemble_renyi_dimension_box(seed='3x3_center', iterations=None, tolerance=0.05):
+def test_ensemble_box_renyi_dimension_q0(seed='3x3_center', iterations=None, tolerance=0.05):
     """Renyi q=0 should match the analytical box dimension and the
     standalone ensemble_box_dimension wrapper exactly."""
     if iterations is None:
@@ -487,7 +487,7 @@ def test_ensemble_renyi_dimension_box(seed='3x3_center', iterations=None, tolera
     expected_D = expected_ensemble_dimension(seed)
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
-    dim, error = objscale.ensemble_renyi_dimension(
+    dim, error = objscale.ensemble_box_renyi_dimension(
         [fractal], q=0.0, min_box_size=10, max_box_size=64
     )
 
@@ -507,7 +507,7 @@ def test_ensemble_renyi_dimension_box(seed='3x3_center', iterations=None, tolera
     print(f"  renyi_dimension q=0 ({seed}): matches ensemble_box_dimension wrapper, PASS")
 
 
-def test_ensemble_renyi_dimension_all_ones_analytic():
+def test_ensemble_box_renyi_dimension_all_ones_analytic():
     """Analytic oracle: an all-ones array has D_q = 2 exactly for any q.
 
     For an all-ones array of side n with box size F, every box has n_i = F^2,
@@ -523,7 +523,7 @@ def test_ensemble_renyi_dimension_all_ones_analytic():
     # Single array
     arr = np.ones((128, 128), dtype=np.float64)
     for q in [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]:
-        D, _ = objscale.ensemble_renyi_dimension(
+        D, _ = objscale.ensemble_box_renyi_dimension(
             [arr], q=q, set='ones',
             box_sizes=[2, 4, 8, 16, 32, 64], min_box_size=2,
         )
@@ -536,7 +536,7 @@ def test_ensemble_renyi_dimension_all_ones_analytic():
     a = np.ones((64, 64), dtype=np.float64)
     b = np.ones((16, 16), dtype=np.float64)
     for q in [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]:
-        D, _ = objscale.ensemble_renyi_dimension(
+        D, _ = objscale.ensemble_box_renyi_dimension(
             [a, b], q=q, set='ones',
             box_sizes=[2, 4, 8, 16], min_box_size=2,
         )
@@ -547,7 +547,7 @@ def test_ensemble_renyi_dimension_all_ones_analytic():
 
     # Vector q on mixed-size ensemble
     qs = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 3.0])
-    D_vec, _ = objscale.ensemble_renyi_dimension(
+    D_vec, _ = objscale.ensemble_box_renyi_dimension(
         [a, b], q=qs, set='ones',
         box_sizes=[2, 4, 8, 16], min_box_size=2,
     )
@@ -578,7 +578,7 @@ def _synthetic_fbm_level_set(size, H, seed):
     return (field > np.median(field)).astype(np.float64)
 
 
-def test_ensemble_renyi_dimension_fbm_monofractal(tolerance=0.15):
+def test_ensemble_box_renyi_dimension_fbm_monofractal(tolerance=0.15):
     """For a 2D fBm level set the dimension is D_q = 2 - H for all q.
 
     Smoke test for the q-vector path on a true monofractal. The tolerance
@@ -596,7 +596,7 @@ def test_ensemble_renyi_dimension_fbm_monofractal(tolerance=0.15):
     arr = _synthetic_fbm_level_set(size=512, H=H, seed=0)
 
     qs = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
-    D_arr, err_arr = objscale.ensemble_renyi_dimension(
+    D_arr, err_arr = objscale.ensemble_box_renyi_dimension(
         [arr], q=qs, min_box_size=4, max_box_size=64
     )
 
@@ -617,14 +617,173 @@ def test_ensemble_renyi_dimension_fbm_monofractal(tolerance=0.15):
         f"renyi(q=0) {D_arr[0]:.10f} != ensemble_box_dimension {box_d:.10f}"
     )
 
-    # Consistency: q=1 entry must equal the standalone ensemble_information_dimension wrapper.
+    # Consistency: q=1 entry must equal ensemble_information_dimension(method='box').
+    # (The default method is now 'sandbox', which uses a different estimator;
+    # we check the box wrapper here because that's what we're consistency-checking.)
     info_d, _ = objscale.ensemble_information_dimension(
-        [arr], min_box_size=4, max_box_size=64
+        [arr], method='box', min_box_size=4, max_box_size=64
     )
     assert abs(D_arr[2] - info_d) < 1e-10, (
-        f"renyi(q=1) {D_arr[2]:.10f} != ensemble_information_dimension {info_d:.10f}"
+        f"renyi(q=1) {D_arr[2]:.10f} != ensemble_information_dimension(method='box') {info_d:.10f}"
     )
     print(f"  renyi_fbm consistency: scalar wrappers match vector entries, PASS")
+
+
+def test_ensemble_sandbox_renyi_dimension_analytic_oracle():
+    """Analytic oracle: an all-ones array has D_q = 2 for any q.
+
+    For an all-ones array of side n, the set is the full plane (filled
+    square), which has dimension exactly 2. The sandbox estimator should
+    recover D_q = 2 for any q to within finite-size tolerance.
+
+    Tighter than the recursive-fractal tolerance because there's no
+    boundary irregularity to bias the slope.
+    """
+    arr = np.ones((128, 128), dtype=np.float64)
+    qs = np.array([0.5, 1.0, 1.5, 2.0, 2.5])
+    D, err = objscale.ensemble_sandbox_renyi_dimension(
+        [arr], q=qs, set='ones',
+        minlength=2, maxlength=40, nbins=20,
+    )
+    for q, d in zip(qs, D):
+        diff = abs(d - 2.0)
+        passed = diff < 0.05
+        status = "PASS" if passed else "FAIL"
+        print(f"  sandbox_oracle q={q}: D={d:.4f}, expected~2.000, {status}")
+        assert passed, (
+            f"sandbox D_{q} on all-ones {d:.4f} differs from 2.0 by more than 0.05"
+        )
+
+    # Scalar q convention
+    D_sc, _ = objscale.ensemble_sandbox_renyi_dimension(
+        arr, q=2.0, set='ones',
+        minlength=2, maxlength=40, nbins=20,
+    )
+    assert abs(D_sc - D[3]) < 1e-10, (
+        f"scalar q=2 ({D_sc:.10f}) != vector q=2 entry ({D[3]:.10f})"
+    )
+    print("  sandbox_oracle scalar/vector consistency: PASS")
+
+
+def test_ensemble_sandbox_renyi_dimension_fbm_monofractal(tolerance=0.15):
+    """For a 2D fBm level set the dimension is D_q = 2 - H for all q.
+
+    Loose tolerance because we use a tiny 256^2 field for test speed; the
+    real validation is in the standalone experiment script.
+    """
+    H = 0.3
+    expected_D = 2.0 - H
+    arr = _synthetic_fbm_level_set(size=256, H=H, seed=0)
+
+    qs = np.array([0.5, 1.0, 1.5, 2.0, 2.5])
+    D_arr, err_arr = objscale.ensemble_sandbox_renyi_dimension(
+        [arr], q=qs, set='edge',
+        minlength=2, maxlength=80, nbins=25,
+    )
+
+    for q, d in zip(qs, D_arr):
+        diff = abs(d - expected_D)
+        passed = diff < tolerance
+        status = "PASS" if passed else "FAIL"
+        print(f"  sandbox_fbm q={q}: expected~{expected_D:.4f}, actual={d:.4f}, {status}")
+        assert passed, (
+            f"sandbox q={q} on fBm gave {d:.4f}, expected ~{expected_D:.4f} +/- {tolerance}"
+        )
+
+
+def test_sandbox_gp_equivalence_at_q2():
+    """At q=2, sandbox returns the same dimension as ensemble_correlation_dimension.
+
+    Since ensemble_correlation_dimension is now a thin wrapper around
+    ensemble_sandbox_renyi_dimension(q=2), the two should agree to float
+    precision when called with the same parameters and (crucially) no
+    random subsampling.
+    """
+    arr = _synthetic_fbm_level_set(size=256, H=0.3, seed=0)
+
+    D_sandbox, err_sandbox, bins_sandbox, Z_sandbox = objscale.ensemble_sandbox_renyi_dimension(
+        [arr], q=2.0, set='edge',
+        minlength=2, maxlength=80, nbins=25,
+        point_reduction_factor=1, return_values=True,
+    )
+    D_gp, err_gp, bins_gp, Cl_gp = objscale.ensemble_correlation_dimension(
+        [arr],
+        minlength=2, maxlength=80, nbins=25,
+        point_reduction_factor=1, return_C_l=True,
+    )
+
+    assert abs(D_sandbox - D_gp) < 1e-12, (
+        f"sandbox D_2 {D_sandbox:.12f} != GP D_2 {D_gp:.12f}"
+    )
+    assert np.allclose(bins_sandbox, bins_gp), "bins differ between sandbox and GP"
+    assert np.allclose(Z_sandbox, Cl_gp), "Z[q=2] != C_l (the partition function should match)"
+    print(f"  sandbox_gp_equivalence: D_2={D_sandbox:.6f} matches GP exactly, PASS")
+
+
+def test_sandbox_duplicate_q1():
+    """Multiple q==1 entries in the q vector must all be handled.
+
+    Regression test for a codex-flagged bug where only the first q==1
+    entry got the log-form special case; later duplicates fell through to
+    the M^0 path and divided by zero (returning inf or garbage). The fix
+    replaces the single q1_index with a per-element mask.
+    """
+    arr = _synthetic_fbm_level_set(size=256, H=0.3, seed=0)
+    D, err = objscale.ensemble_sandbox_renyi_dimension(
+        [arr], q=np.array([0.5, 1.0, 1.0, 2.0]), set='edge',
+        minlength=2, maxlength=80, nbins=25,
+    )
+    assert abs(D[1] - D[2]) < 1e-12, (
+        f"duplicate q=1 entries disagree: {D[1]:.12f} vs {D[2]:.12f}"
+    )
+    assert np.isfinite(D[1]) and abs(D[1] - 1.7) < 0.15, (
+        f"q=1 entry {D[1]:.4f} not near theory 1.7"
+    )
+    print(f"  sandbox duplicate q=1: both entries = {D[1]:.4f}, PASS")
+
+
+def test_information_dimension_method_parameter():
+    """ensemble_information_dimension dispatches to sandbox by default.
+
+    Verifies (a) the default method is 'sandbox', (b) both methods return
+    finite D_1 values close to the theoretical fBm value, (c) explicit
+    method='sandbox' matches the default.
+    """
+    arr = _synthetic_fbm_level_set(size=256, H=0.3, seed=0)
+    expected_D = 1.7
+
+    D_default, _ = objscale.ensemble_information_dimension(
+        [arr], minlength=2, maxlength=80, nbins=25,
+    )
+    D_sandbox, _ = objscale.ensemble_information_dimension(
+        [arr], method='sandbox', minlength=2, maxlength=80, nbins=25,
+    )
+    D_box, _ = objscale.ensemble_information_dimension(
+        [arr], method='box', min_box_size=4, max_box_size=64,
+    )
+
+    assert abs(D_default - D_sandbox) < 1e-12, (
+        f"default ({D_default:.6f}) != explicit sandbox ({D_sandbox:.6f}); "
+        "default method should be 'sandbox'"
+    )
+    assert abs(D_sandbox - expected_D) < 0.15, (
+        f"sandbox D_1 {D_sandbox:.4f} differs from theory {expected_D:.4f}"
+    )
+    assert abs(D_box - expected_D) < 0.15, (
+        f"box D_1 {D_box:.4f} differs from theory {expected_D:.4f}"
+    )
+    print(
+        f"  information_dim method dispatch: default==sandbox={D_sandbox:.4f}, "
+        f"box={D_box:.4f}, both ~ {expected_D}, PASS"
+    )
+
+    # Bad method
+    try:
+        objscale.ensemble_information_dimension([arr], method='garbage')
+        raise AssertionError("Expected ValueError for method='garbage'")
+    except ValueError as e:
+        assert 'sandbox' in str(e) and 'box' in str(e)
+    print("  information_dim bad method: correctly raised ValueError, PASS")
 
 
 def test_individual_correlation_dimension(tolerance=0.05):
@@ -684,7 +843,7 @@ def run_all_tests():
     for seed in ['3x3_center', '5x5_center', '5x5_block']:
         tests = [
             lambda s=seed: test_ensemble_box_dimension(seed=s),
-            lambda s=seed: test_ensemble_renyi_dimension_box(seed=s),
+            lambda s=seed: test_ensemble_box_renyi_dimension_q0(seed=s),
             lambda s=seed: test_ensemble_correlation_dimension(seed=s),
             lambda s=seed: test_ensemble_correlation_dimension_nonuniform(seed=s),
             lambda s=seed: test_size_distribution(seed=s),
@@ -710,8 +869,13 @@ def run_all_tests():
         test_individual_fractal_dimension_nan_surrounded,
         test_individual_correlation_dimension,
         test_correlation_dimension_maxlength_too_large,
-        test_ensemble_renyi_dimension_all_ones_analytic,
-        test_ensemble_renyi_dimension_fbm_monofractal,
+        test_ensemble_box_renyi_dimension_all_ones_analytic,
+        test_ensemble_box_renyi_dimension_fbm_monofractal,
+        test_ensemble_sandbox_renyi_dimension_analytic_oracle,
+        test_ensemble_sandbox_renyi_dimension_fbm_monofractal,
+        test_sandbox_gp_equivalence_at_q2,
+        test_sandbox_duplicate_q1,
+        test_information_dimension_method_parameter,
     ]
     for test_func in standalone_tests:
         try:

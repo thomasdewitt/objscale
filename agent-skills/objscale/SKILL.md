@@ -33,10 +33,15 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 
 | Task | Function | Notes |
 |------|----------|-------|
-| **Recommended** ensemble fractal dimension | `ensemble_correlation_dimension` | Most robust method |
+| **Recommended** ensemble fractal dimension (q=2) | `ensemble_correlation_dimension` | Thin wrapper around `ensemble_sandbox_renyi_dimension(q=2.0)` |
+| Generalized Rényi dimension D_q via sandbox | `ensemble_sandbox_renyi_dimension` | Set-centered balls at continuous radii. Best for any q except q=0. |
+| Generalized Rényi dimension D_q via box counting | `ensemble_box_renyi_dimension` | Fixed-grid tiles. Natural for q=0; noisier than sandbox at q≠0. |
+| Box-counting dimension (q=0) | `ensemble_box_dimension` | Box-Renyi at q=0. |
+| Information dimension (q=1) | `ensemble_information_dimension` | Defaults to `method='sandbox'`; pass `method='box'` for the box estimator. |
 | Correlation dimension of a single object | `individual_correlation_dimension` | Isolates Nth largest structure, computes correlation dim |
 | Individual object fractal dimension (perimeter-area) | `individual_fractal_dimension` | Uses perimeter-area scaling with optional binning |
-| Box-counting dimension | `ensemble_box_dimension` | Classic method, prefer correlation |
+
+**Two estimators, one quantity.** Box and sandbox both estimate the same Rényi dimension D_q, but sample the partition function differently. Box counting tiles space with a fixed grid; sandbox places balls on set points and counts neighbors at continuous radii. They agree for monofractal sets and disagree only at finite-size scales. Use sandbox by default; box is the natural choice only for q=0 (where sandbox uses an awkward inverse-mass form).
 
 **Note**: Do not use `ensemble_coarsening_dimension` - it has ambiguity issues with binary array coarsening.
 
@@ -100,6 +105,27 @@ objscale.ensemble_correlation_dimension(
 ) -> (dimension, error) | (dimension, error, bins, C_l)
 ```
 
+Thin wrapper around `ensemble_sandbox_renyi_dimension(..., q=2.0, set='edge')`. The sandbox q=2 partition function `sum_i M_i(r)` is exactly the Grassberger-Procaccia correlation integral, so this name is preserved as the standard q=2 entry point.
+
+```python
+objscale.ensemble_sandbox_renyi_dimension(
+    binary_arrays,               # Binary arrays (list or single)
+    q=2.0,                       # Rényi order(s); scalar or 1-D array
+    set='edge',                  # 'edge' (one-sided edge mask) or 'ones'
+    x_sizes=None,                # Pixel sizes in x
+    y_sizes=None,                # Pixel sizes in y
+    minlength='auto',            # Min scale
+    maxlength='auto',            # Max scale
+    interior_circles_only=True,  # Avoid boundary effects
+    nbins=50,                    # Number of scale bins when bins=None
+    bins=None,                   # Custom bin edges or int
+    point_reduction_factor=1,    # Subsample sandbox centers (>=1)
+    return_values=False          # Return (D_q, err, bins, Z)
+) -> (D_q, err) | (D_q, err, bins, Z)
+```
+
+Sandbox-method Rényi dimension D_q. For each set point, count neighbors `M_i(r)` within radius r; partition function is `Z_q(r) = sum_i M_i^(q-1)` for `q != 1` (slope vs log r divided by `q-1` gives `D_q`), or per-center mean `<log10 M(r)>` for `q == 1` (slope is `D_1` directly). Strict generalization of Grassberger-Procaccia (`q=2` is the pair count). Better than box counting at `q != 0`; for `q = 0` use `ensemble_box_dimension` because sandbox q=0 needs the inverse-mass form. Reference: Tél, Fülöp, Vicsek 1989, Physica A 159; Vicsek 1992 textbook ch. 3.
+
 ```python
 objscale.individual_correlation_dimension(
     array,                       # Single 2D binary array
@@ -129,7 +155,7 @@ objscale.individual_fractal_dimension(
 ```
 
 ```python
-objscale.ensemble_renyi_dimension(
+objscale.ensemble_box_renyi_dimension(
     binary_arrays,         # Binary arrays (list or single)
     q=0.0,                 # Rényi order(s); scalar or 1-D array
     set='edge',            # 'edge' (one-sided edge mask: 1-pixels with a 0-neighbor) or 'ones'
@@ -141,15 +167,7 @@ objscale.ensemble_renyi_dimension(
 ) -> (D_q, err) | (D_q, err, box_sizes, partition)
 ```
 
-The Rényi family generalizes box-counting (q=0), information (q=1), and
-correlation (q=2) dimensions into a single function. For monofractal sets
-D_q is constant in q; for multifractal sets D_q decreases with q. q can be
-a scalar or a 1-D array — the latter returns arrays of D_q values and a
-partition matrix with one row per q. Always uses interior-only boxes
-(input is trimmed to a multiple of the current box size); for q != 1 the
-normalization is geometric (n_i / V where V is total interior pixel area);
-for q == 1 the Shannon entropy form is used (which intrinsically requires
-probability normalization).
+Box-counting Rényi dimension D_q. Always uses interior-only boxes (input is trimmed to a multiple of the current box size). For q != 1 the normalization is geometric (n_i / V where V is total interior pixel area); for q == 1 the Shannon entropy form is used. Use this for q=0 (where it's the natural box-counting dimension) and as a robustness comparison against the sandbox method.
 
 ```python
 objscale.ensemble_box_dimension(
@@ -162,21 +180,19 @@ objscale.ensemble_box_dimension(
 ) -> (D_0, err) | (D_0, err, box_sizes, n_boxes)
 ```
 
-Equivalent to `ensemble_renyi_dimension(..., q=0)`.
+Thin wrapper around `ensemble_box_renyi_dimension(..., q=0)`. Box counting is the natural q=0 estimator (sandbox at q=0 uses an awkward inverse-mass form).
 
 ```python
 objscale.ensemble_information_dimension(
     binary_arrays,         # Binary arrays (list or single)
+    method='sandbox',      # 'sandbox' (default) or 'box'
     set='edge',            # 'edge' or 'ones'
-    max_box_size=None,     # Largest box in pixels (None = min(arr.shape))
-    min_box_size=2,        # Smallest box in pixels
-    box_sizes='default',   # Custom box sizes or 'default' (powers of 2)
-    return_values=False    # Return (dim, err, box_sizes, entropy)
-) -> (D_1, err) | (D_1, err, box_sizes, S1)
+    return_values=False,   # Return (dim, err, bins, partition)
+    **kwargs,              # Method-specific options forwarded to underlying function
+) -> (D_1, err) | (D_1, err, bins, partition)
 ```
 
-Equivalent to `ensemble_renyi_dimension(..., q=1)`. Uses the Shannon
-entropy form `S_1 = -sum p_i log p_i`.
+Information dimension D_1 (the q=1 Rényi dimension). Dispatches to `ensemble_sandbox_renyi_dimension(q=1)` by default, or `ensemble_box_renyi_dimension(q=1)` with `method='box'`. Sandbox is the default because it has lower grid-quantization noise at q=1. Method-specific options (`minlength`, `maxlength`, ... for sandbox; `max_box_size`, `box_sizes`, ... for box) are forwarded via `**kwargs`.
 
 ### Size Distributions
 
