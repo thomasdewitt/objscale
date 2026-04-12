@@ -95,11 +95,8 @@ def encase_in_value(
     np.ndarray
         Same as input but with a layer 'n_deep' of 'value' all around the edge.
     """
-    nans_lr = np.empty((array.shape[0], n_deep), dtype=dtype)
-    nans_tb = np.empty((n_deep, array.shape[1] + (2 * n_deep)), dtype=dtype)  # will be two bigger after first appends
-    nans_lr[:], nans_tb[:] = value, value
-    array = np.append(nans_lr, array, axis=1)
-    array = np.append(array, nans_lr, axis=1)
-    array = np.append(nans_tb, array, axis=0)
-    array = np.append(array, nans_tb, axis=0)
-    return array
+    out_dtype = np.result_type(dtype, array.dtype)
+    h, w = array.shape
+    result = np.full((h + 2 * n_deep, w + 2 * n_deep), value, dtype=out_dtype)
+    result[n_deep:n_deep + h, n_deep:n_deep + w] = array
+    return result

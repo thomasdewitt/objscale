@@ -250,7 +250,7 @@ def individual_correlation_dimension(
 
     # Pad with NaN border if not already present
     if not np.any(np.isnan(array)):
-        array = np.pad(array.astype(float), pad_width=1, mode='constant',
+        array = np.pad(array.astype(np.float32), pad_width=1, mode='constant',
                        constant_values=np.nan)
         if x_sizes is not None:
             x_sizes = np.pad(x_sizes, pad_width=1, mode='edge')
@@ -273,7 +273,7 @@ def individual_correlation_dimension(
     cols = np.any(isolated, axis=0)
     rmin, rmax = np.where(rows)[0][[0, -1]]
     cmin, cmax = np.where(cols)[0][[0, -1]]
-    cropped = isolated[rmin:rmax + 1, cmin:cmax + 1].astype(np.float64)
+    cropped = isolated[rmin:rmax + 1, cmin:cmax + 1].astype(np.float32)
 
     # Pad with 1px of zeros to prevent toroidal wrap artifacts
     padded = np.pad(cropped, pad_width=1, mode='constant', constant_values=0)
@@ -1073,19 +1073,24 @@ def ensemble_sandbox_renyi_dimension(
         boundary_phys_x = locations_x[all_set_coords[:, 0], all_set_coords[:, 1]]
         boundary_phys_y = locations_y[all_set_coords[:, 0], all_set_coords[:, 1]]
         boundary_phys = np.column_stack([boundary_phys_x, boundary_phys_y])
+        del boundary_phys_x, boundary_phys_y
 
         center_phys_x = locations_x[sandbox_centers_idx[:, 0], sandbox_centers_idx[:, 1]]
         center_phys_y = locations_y[sandbox_centers_idx[:, 0], sandbox_centers_idx[:, 1]]
         center_phys = np.column_stack([center_phys_x, center_phys_y])
+        n_centers_here = center_phys.shape[0]
+        del set_mask, all_set_coords, sandbox_centers_idx
+        del center_phys_x, center_phys_y
 
         # Sort boundary points by physical y for the kernel's bbox trick
         sort_order = np.argsort(boundary_phys[:, 1])
         sorted_boundary_phys = boundary_phys[sort_order]
+        del sort_order, boundary_phys
 
         Z_total += _sandbox_partition(
             center_phys, sorted_boundary_phys, bins_sq, max_bin, q_arr, is_q1
         )
-        n_centers_total += sandbox_centers_idx.shape[0]
+        n_centers_total += n_centers_here
 
     # At q=1 the kernel accumulates sum_i log10 M_i, which scales as
     # n_centers_total * D_1 * log10(r). Convert to per-center mean so the
@@ -1413,6 +1418,7 @@ def get_coords_of_boundaries(array: NDArray) -> NDArray:
     shifted_down = np.roll(array, 1, axis=0)
     diff_right = shifted_right - array
     diff_down = shifted_down - array
+    del shifted_right, shifted_down
 
     right_side_of_pixel = np.argwhere(diff_right == 1)
     right_side_of_pixel[:, 1] -= 1
@@ -1661,9 +1667,8 @@ def total_number(
     int
         Number of connected objects.
     """
-    array_copy = array.copy()
-    array_copy[np.isnan(array_copy)] = 0
-    _, n_structures = label(array_copy.astype(bool), structure, output=np.float32)
+    clean = np.where(np.isnan(array), 0, array)
+    _, n_structures = label(clean.astype(bool), structure, output=np.float32)
     return n_structures
 
 
@@ -1789,8 +1794,8 @@ def label_size(
         raise ValueError(f'wrap={wrap} not supported')
 
     # Flatten arrays to find their indices.
-    values = np.sort(labelled_array.flatten())
-    original_locations = np.argsort(labelled_array.flatten())
+    values = np.sort(labelled_array.ravel())
+    original_locations = np.argsort(labelled_array.ravel())
     indices_2d = np.array(np.unravel_index(original_locations, labelled_array.shape)).T
 
     labelled_array[np.isnan(array)] = np.nan  # Turn this back to nan so perimeter along it is not included
