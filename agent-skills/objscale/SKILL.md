@@ -59,6 +59,15 @@ If you are attempting to analyze a large dataset that does not fit in memory, yo
 
 **For plotting**: Use `finite_array_powerlaw_exponent` with `return_counts=True` to get log10 bin middles and counts suitable for plotting the distribution.
 
+**Theory — finite domain truncation (DeWitt & Garrett 2024)**: Objects in finite domains can be *truncated* (touching the domain boundary) or *non-truncated* (entirely interior). Truncated objects have unknown true sizes because the portion beyond the boundary is unmeasured. Larger objects are more likely to be truncated, so the large end of a size distribution is progressively contaminated. The `finite_*` functions correct for this by:
+
+1. Binning sizes in log-space and separately counting truncated vs. non-truncated objects per bin.
+2. Excluding bins where the fraction of truncated objects exceeds `truncation_threshold` (default 0.5). This removes the large-size tail where most objects are cut off by the domain edge.
+3. Excluding bins with fewer than `min_count_threshold` counts (default 30). Below ~24 counts, bin-count statistics are non-Gaussian and least-squares regression on log-transformed counts becomes unreliable.
+4. Fitting a power law via linear regression to the surviving "good" bins.
+
+`finite_array_size_distribution` returns all four arrays — `(bin_middles, nontruncated_counts, truncated_counts, truncation_index)` — so you can inspect which bins survived and plot truncated vs. non-truncated counts separately. `truncation_index` is the first bin index where the truncation fraction exceeds the threshold. `finite_array_powerlaw_exponent` does steps 1–4 internally and returns the fitted exponent directly.
+
 ### Object Analysis
 
 | Task                                        | Function                                |

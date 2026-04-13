@@ -1189,71 +1189,12 @@ def ensemble_coarsening_dimension(
     mean_total_perimeters : np.ndarray, optional
         Mean total perimeters. Only returned if return_values=True.
     """
-    if isinstance(arrays, np.ndarray):
-        arrays = [arrays]
-    if x_sizes is None:
-        x_sizes = np.ones(arrays[0].shape, dtype=np.float32)
-    if y_sizes is None:
-        y_sizes = np.ones(arrays[0].shape, dtype=np.float32)
-
-    if isinstance(coarsening_factors, str):  # to not try elementwise comparison
-        if coarsening_factors != 'default':
-            raise ValueError(f'coarsening_factors={coarsening_factors} not supported')
-        if np.count_nonzero((arrays[0] < 1) & (arrays[0] > 0)) == 0:
-            # If a binary array, even coarsening factors can be ambiguous because sometimes the superpixel is half cloudy
-            coarsening_factors = 3 ** np.arange(0, 10)
-        else:
-            # Otherwise, use more coarsening factors:
-            coarsening_factors = 2 ** np.arange(0, 15)
-    else:
-        coarsening_factors = np.array(coarsening_factors)
-
-    max_coarsening_factor = min(arrays[0].shape) / min_pixels
-    coarsening_factors = coarsening_factors[coarsening_factors <= max_coarsening_factor]
-
-    mean_total_perimeters = np.empty((0, coarsening_factors.size), dtype=np.float32)
-
-    for i in range(len(arrays)):
-        array = arrays[i]
-        if isinstance(x_sizes, list):
-            xs = x_sizes[i]
-        else:
-            xs = x_sizes
-        if isinstance(y_sizes, list):
-            ys = y_sizes[i]
-        else:
-            ys = y_sizes
-
-        total_perimeters = []
-        for factor in coarsening_factors:
-            # Coarsen
-            coarsened_array = encase_in_value(coarsen_array(array, factor), np.nan)
-            coarsened_x_sizes = factor * encase_in_value(coarsen_array(xs, factor), 0)
-            coarsened_y_sizes = factor * encase_in_value(coarsen_array(ys, factor), 0)
-
-            nanmask = (np.isnan(coarsened_array) | np.isnan(coarsened_x_sizes) | np.isnan(coarsened_y_sizes))
-            # Make binary
-            coarsened_array_binary = (coarsened_array > cloudy_threshold).astype(np.float32)
-
-            # To not count exterior perimeter, set to nan, to count it, set to 0
-            if count_exterior:
-                padding = 0
-            else:
-                padding = np.nan
-            coarsened_array_binary[nanmask] = padding
-
-            total_p = total_perimeter(coarsened_array_binary, coarsened_x_sizes, coarsened_y_sizes)
-            total_perimeters.append(total_p)
-        mean_total_perimeters = np.append(mean_total_perimeters, [total_perimeters], axis=0)
-
-    mean_total_perimeters = np.mean(mean_total_perimeters, axis=0)
-    mean_total_perimeters[mean_total_perimeters == 0] = np.nan  # eliminate warning when logging 0
-
-    (slope, _), (error, _) = linear_regression(np.log10(coarsening_factors), np.log10(mean_total_perimeters))
-    if return_values:
-        return 1 - slope, error, coarsening_factors, mean_total_perimeters
-
-    return 1 - slope, error
+    raise NotImplementedError(
+        "ensemble_coarsening_dimension has been removed due to ambiguity in "
+        "coarsening binary arrays. Use ensemble_correlation_dimension (q=2), "
+        "ensemble_sandbox_renyi_dimension (general q), or "
+        "ensemble_box_dimension (q=0) instead."
+    )
 
 
 _UNSET = object()
