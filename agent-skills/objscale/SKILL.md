@@ -13,7 +13,7 @@ Object-based analysis functions for fractal dimensions and size distributions in
 
 ## Critical Usage Note
 
-**When analyzing multiple arrays (e.g., multiple cloud field images), pass them ALL AT ONCE as a list.** This applies to all functions that accept lists of arrays: fractal dimensions (ensemble and individual), size distributions, etc. Do not call functions separately for each array and combine results - these are not linear operations.
+**When analyzing multiple arrays (e.g., multiple cloud field images), pass them ALL AT ONCE as a list.** This applies to all functions that accept lists of arrays: fractal dimensions (ensemble and individual), size distributions, etc. Do not call functions separately for each array and combine results - these are not, in general, linear operations.
 
 ```python
 # CORRECT - pass all arrays at once
@@ -27,19 +27,21 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 #     result = some_objscale_function(arr)  # NO!
 ```
 
+If you are attempting to analyze a large dataset that does not fit in memory, you MUST carefully consider whether the specific function you are using is linear. In the above example, the output dimensions/exponents are computed using a linear regression and are NOT linear with the inputs. Other functions, such as bin counts from a size distribution, can sometimes return linear outputs. You may have to compute the regression yourself. You MUST carefully consider cases where loops are necessary (is the function linear? is each input chunk the same size? does `nan` prevalence change?), and when you are unsure explain the situation to your user!
+
 ## When to Use Which Function
 
 ### Fractal Dimensions
 
-| Task | Function | Notes |
-|------|----------|-------|
-| **Recommended** ensemble fractal dimension (q=2) | `ensemble_correlation_dimension` | Thin wrapper around `ensemble_sandbox_renyi_dimension(q=2.0)` |
-| Generalized Rényi dimension D_q via sandbox | `ensemble_sandbox_renyi_dimension` | Set-centered balls at continuous radii. Best for any q except q=0. |
-| Generalized Rényi dimension D_q via box counting | `ensemble_box_renyi_dimension` | Fixed-grid tiles. Natural for q=0; noisier than sandbox at q≠0. |
-| Box-counting dimension (q=0) | `ensemble_box_dimension` | Box-Renyi at q=0. |
-| Information dimension (q=1) | `ensemble_information_dimension` | Defaults to `method='sandbox'`; pass `method='box'` for the box estimator. |
-| Correlation dimension of a single object | `individual_correlation_dimension` | Isolates Nth largest structure, computes correlation dim |
-| Individual object fractal dimension (perimeter-area) | `individual_fractal_dimension` | Uses perimeter-area scaling with optional binning |
+| Task                                                 | Function                           | Notes                                                                      |
+| ---------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------- |
+| **Recommended** ensemble fractal dimension (q=2)     | `ensemble_correlation_dimension`   | Thin wrapper around `ensemble_sandbox_renyi_dimension(q=2.0)`              |
+| Generalized Rényi dimension D_q via sandbox          | `ensemble_sandbox_renyi_dimension` | Set-centered balls at continuous radii. Best for any q except q=0.         |
+| Generalized Rényi dimension D_q via box counting     | `ensemble_box_renyi_dimension`     | Fixed-grid tiles. Natural for q=0; noisier than sandbox at q≠0.            |
+| Box-counting dimension (q=0)                         | `ensemble_box_dimension`           | Box-Renyi at q=0.                                                          |
+| Information dimension (q=1)                          | `ensemble_information_dimension`   | Defaults to `method='sandbox'`; pass `method='box'` for the box estimator. |
+| Correlation dimension of a single object             | `individual_correlation_dimension` | Isolates Nth largest structure, computes correlation dim                   |
+| Individual object fractal dimension (perimeter-area) | `individual_fractal_dimension`     | Uses perimeter-area scaling with optional binning                          |
 
 **Two estimators, one quantity.** Box and sandbox both estimate the same Rényi dimension D_q, but sample the partition function differently. Box counting tiles space with a fixed grid; sandbox places balls on set points and counts neighbors at continuous radii. They agree for monofractal sets and disagree only at finite-size scales. Use sandbox by default; box is the natural choice only for q=0 (where sandbox uses an awkward inverse-mass form).
 
@@ -47,11 +49,11 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 
 ### Size Distributions
 
-| Task | Function | Notes |
-|------|----------|-------|
-| Power-law exponent | `finite_array_powerlaw_exponent` | **Always prefer this** - accounts for domain truncation |
-| Full distribution with truncation info | `finite_array_size_distribution` | Returns truncated/non-truncated counts |
-| Simple distribution (no corrections) | `array_size_distribution` | Only for special cases |
+| Task                                   | Function                         | Notes                                                   |
+| -------------------------------------- | -------------------------------- | ------------------------------------------------------- |
+| Power-law exponent                     | `finite_array_powerlaw_exponent` | **Always prefer this** - accounts for domain truncation |
+| Full distribution with truncation info | `finite_array_size_distribution` | Returns truncated/non-truncated counts                  |
+| Simple distribution (no corrections)   | `array_size_distribution`        | Only for special cases                                  |
 
 **IMPORTANT**: Always use `finite_*` functions for size distributions. They properly account for objects truncated by domain boundaries.
 
@@ -59,32 +61,32 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 
 ### Object Analysis
 
-| Task | Function |
-|------|----------|
-| Label connected components | `label_structures` |
-| Get structure areas (fast, O(n)) | `get_structure_areas` |
-| Get structure perimeters (fast, O(n)) | `get_structure_perimeters` |
-| Get structure height and width | `get_structure_height_width` |
-| Get all four properties at once | `get_structure_props` |
-| Get every boundary perimeter (incl. nested) | `get_every_boundary_perimeter` |
-| Total perimeter of all objects | `total_perimeter` |
-| Count objects | `total_number` |
-| Extract Nth largest object | `isolate_nth_largest_structure` |
-| Remove border-touching objects | `remove_structures_touching_border_nan` |
-| Fill holes in objects | `remove_structure_holes` |
-| Label objects by size | `label_size` |
-| Clear border-adjacent structures | `clear_border_adjacent` |
+| Task                                        | Function                                |
+| ------------------------------------------- | --------------------------------------- |
+| Label connected components                  | `label_structures`                      |
+| Get structure areas (fast, O(n))            | `get_structure_areas`                   |
+| Get structure perimeters (fast, O(n))       | `get_structure_perimeters`              |
+| Get structure height and width              | `get_structure_height_width`            |
+| Get all four properties at once             | `get_structure_props`                   |
+| Get every boundary perimeter (incl. nested) | `get_every_boundary_perimeter`          |
+| Total perimeter of all objects              | `total_perimeter`                       |
+| Count objects                               | `total_number`                          |
+| Extract Nth largest object                  | `isolate_nth_largest_structure`         |
+| Remove border-touching objects              | `remove_structures_touching_border_nan` |
+| Fill holes in objects                       | `remove_structure_holes`                |
+| Label objects by size                       | `label_size`                            |
+| Clear border-adjacent structures            | `clear_border_adjacent`                 |
 
 ### Utilities
 
-| Task | Function |
-|------|----------|
-| Reduce array resolution | `coarsen_array` |
-| Linear regression with errors | `linear_regression` |
-| Add border to array | `encase_in_value` |
-| Find boundary pixel coordinates | `get_coords_of_boundaries` |
+| Task                             | Function                         |
+| -------------------------------- | -------------------------------- |
+| Reduce array resolution          | `coarsen_array`                  |
+| Linear regression with errors    | `linear_regression`              |
+| Add border to array              | `encase_in_value`                |
+| Find boundary pixel coordinates  | `get_coords_of_boundaries`       |
 | Convert pixel sizes to locations | `get_locations_from_pixel_sizes` |
-| Set number of parallel threads | `set_num_threads` |
+| Set number of parallel threads   | `set_num_threads`                |
 
 ## Function Signatures
 
@@ -405,6 +407,7 @@ objscale.encase_in_value(
 ## Handling Non-Rectangular Domains
 
 Use `np.nan` to mark regions outside your domain of interest:
+
 - Objects touching nan boundaries are treated as truncated
 - Perimeter is not counted along nan boundaries
 - Enables arbitrary domain shapes
