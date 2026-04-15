@@ -1111,7 +1111,9 @@ def ensemble_sandbox_renyi_dimension(
             # Z[qi] is already <log10 M_i> linear in log10 r.
             y_fit = y
         else:
-            y_fit = np.where(y > 0, np.log10(y), np.nan)
+            y_fit = np.full_like(y, np.nan)
+            pos = y > 0
+            y_fit[pos] = np.log10(y[pos])
         (slope, _), (slope_err, _) = linear_regression(log_r, y_fit)
         if not np.isfinite(slope):
             continue
