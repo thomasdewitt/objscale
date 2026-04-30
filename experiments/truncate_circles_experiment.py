@@ -30,10 +30,16 @@ N_REALIZATIONS = int(os.environ.get('TC_N', 10))
 SIZE = int(os.environ.get('TC_SIZE', 4096))
 H = float(os.environ.get('TC_H', 0.5))
 PRF = float(os.environ.get('TC_PRF', 1))
+FIELD = os.environ.get('TC_FIELD', 'fbm').lower()  # 'fbm' or 'fif'
+ALPHA = float(os.environ.get('TC_ALPHA', 2.0))
+C1 = float(os.environ.get('TC_C1', 0.1))
 NBINS = 50
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
-_TAG = f'{N_REALIZATIONS}x{SIZE}_H{H:g}'
+if FIELD == 'fif':
+    _TAG = f'fif_{N_REALIZATIONS}x{SIZE}_alpha{ALPHA:g}_C1{C1:g}_H{H:g}'
+else:
+    _TAG = f'{N_REALIZATIONS}x{SIZE}_H{H:g}'
 if PRF != 1:
     _TAG += f'_prf{PRF:g}'
 NPZ_PATH = os.path.join(OUT_DIR, f'truncate_circles_partition_{_TAG}.npz')
@@ -46,8 +52,17 @@ def generate_fields():
     for i in range(N_REALIZATIONS):
         # Each call uses fresh global noise; seed numpy for determinism.
         np.random.seed(rng.integers(2**31 - 1))
-        f = si.fBm_ND_circulant((SIZE, SIZE), H=H)
-        binary = (f > 0).astype(np.int8)
+        if FIELD == 'fif':
+            f = si.FIF_ND((SIZE, SIZE), alpha=ALPHA, C1=C1, H=H,
+                          periodic=True)
+            # FIF is a positive flux with mean 1; threshold at the per-
+            # realization median so the binary set fraction is ~0.5,
+            # matching fBm-at-0.
+            thresh = float(np.median(f))
+            binary = (f > thresh).astype(np.int8)
+        else:
+            f = si.fBm_ND_circulant((SIZE, SIZE), H=H)
+            binary = (f > 0).astype(np.int8)
         del f
         fields.append(binary)
         print(f'  generated field {i + 1}/{N_REALIZATIONS} '
@@ -125,16 +140,27 @@ def main():
     ax.plot(x_mid, D_trunc, '-', color='#184727', linewidth=1.8,
             label="interior_circles_only='truncate' (per-center cap)")
 
-    ax.axhline(2.0 - H, linestyle='--', color='0.3', linewidth=1, alpha=0.7,
-               label=f'D = 2 - H = {2.0 - H:.1f}')
+    if FIELD == 'fif':
+        ax.axhline(2.0 - H, linestyle='--', color='0.3', linewidth=1, alpha=0.7,
+                   label=f'2 - H = {2.0 - H:.1f} (fBm reference)')
+    else:
+        ax.axhline(2.0 - H, linestyle='--', color='0.3', linewidth=1, alpha=0.7,
+                   label=f'D = 2 - H = {2.0 - H:.1f}')
     ax.set_xscale('log')
     ax.set_ylim(1.30, 1.70)
     ax.set_xlabel(r'circle radius $l$ (pixels)', fontsize=11)
     ax.set_ylabel(r'local $D_2 = d\log Z_2 / d\log l$', fontsize=11)
-    title = (
-        f'fBm H={H}, threshold-zero edge set, '
-        f'{N_REALIZATIONS}x{SIZE}^2 ensemble'
-    )
+    if FIELD == 'fif':
+        title = (
+            f'FIF alpha={ALPHA:g}, C1={C1:g}, H={H:g}, '
+            f'median-threshold edge set, '
+            f'{N_REALIZATIONS}x{SIZE}^2 ensemble'
+        )
+    else:
+        title = (
+            f'fBm H={H}, threshold-zero edge set, '
+            f'{N_REALIZATIONS}x{SIZE}^2 ensemble'
+        )
     if PRF != 1:
         title += f'  (prf={PRF:g})'
     ax.set_title(title, fontsize=11)
