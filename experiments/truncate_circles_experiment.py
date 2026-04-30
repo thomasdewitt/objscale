@@ -26,14 +26,15 @@ import scaleinvariance as si
 from objscale import ensemble_sandbox_renyi_dimension
 
 
-N_REALIZATIONS = 10
-SIZE = 4096
-H = 0.5
+N_REALIZATIONS = int(os.environ.get('TC_N', 10))
+SIZE = int(os.environ.get('TC_SIZE', 4096))
+H = float(os.environ.get('TC_H', 0.5))
 NBINS = 50
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
-NPZ_PATH = os.path.join(OUT_DIR, 'truncate_circles_partition.npz')
-FIG_PATH = os.path.join(OUT_DIR, 'truncate_circles_local_slopes.png')
+_TAG = f'{N_REALIZATIONS}x{SIZE}_H{H:g}'
+NPZ_PATH = os.path.join(OUT_DIR, f'truncate_circles_partition_{_TAG}.npz')
+FIG_PATH = os.path.join(OUT_DIR, f'truncate_circles_local_slopes_{_TAG}.png')
 
 
 def generate_fields():
