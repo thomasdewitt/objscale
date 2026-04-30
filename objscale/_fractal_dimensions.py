@@ -907,12 +907,12 @@ def ensemble_sandbox_renyi_dimension(
           ``M_i(r)`` low at large ``r``.
         * ``'truncate'`` — every set point is used as a center, but each
           center's contribution is capped at radii ``r <= d_edge(center)``,
-          where ``d_edge`` is the distance to the nearest domain edge.
-          Each bin's partition function is then averaged over only the
-          centers admissible at that bin (``Z_q(r) = <M_i(r)^{q-1}>``
-          where the average is over centers with ``r <= d_edge_i``).
-          Recovers small-scale information that ``True`` discards while
-          avoiding the truncation bias of ``False``.
+          where ``d_edge`` is the distance to the nearest domain edge. ``Z``
+          remains a raw sum over admissible centers (no per-bin
+          normalization), so the count-vs-radius signature includes the
+          fact that the contributing-center population shrinks with ``r``;
+          the fitted slope therefore picks up an extra
+          ``d log N(r) / d log r`` term on top of ``(q-1) D_q``.
     nbins : int, default=50
         Number of log-spaced distance bins (used when ``bins`` is None).
     bins : np.ndarray or int, optional
@@ -1148,23 +1148,14 @@ def ensemble_sandbox_renyi_dimension(
         N_per_bin_total += N_chunk
         n_centers_total += n_centers_here
 
-    # 'truncate' mode: per-bin contributing-center count varies with r, so
-    # divide Z by N_per_bin to recover the per-center mean <M^(q-1)>(r).
-    # The slope of log <M^(q-1)> vs log r is then (q-1) D_q for q!=1 and
-    # D_1 for q=1, just like the interior/open paths whose effective
-    # N_per_bin is constant.
-    if boundary_mode == 'truncate':
-        with np.errstate(divide='ignore', invalid='ignore'):
-            for qi in range(Q):
-                Z_total[qi] = np.where(
-                    N_per_bin_total > 0,
-                    Z_total[qi] / np.maximum(N_per_bin_total, 1),
-                    0.0,
-                )
-    elif n_centers_total > 0 and is_q1.any():
-        # Legacy interior/open paths: at q=1 the kernel accumulates
-        # sum_i log10 M_i, which scales as n_centers_total * D_1 * log10(r).
-        # Convert to per-center mean. Apply to every q==1 entry.
+    # All modes: Z is the raw partition-function sum (sum_i M_i^(q-1) for
+    # q!=1, sum_i log10 M_i for q==1). For q==1 we convert to a per-center
+    # mean so the slope vs log r is D_1 directly. In 'truncate' mode the
+    # contributing-center count varies with r; we deliberately do NOT
+    # divide by N_per_bin, since the user wants Z to remain a count and
+    # the resulting d log N(r) / d log r contribution to the slope is
+    # part of the methodological signature of the truncate approach.
+    if n_centers_total > 0 and is_q1.any():
         Z_total[is_q1, :] /= float(n_centers_total)
 
     # ----- linear regression per q -----
