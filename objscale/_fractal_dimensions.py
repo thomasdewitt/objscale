@@ -833,7 +833,7 @@ def ensemble_sandbox_renyi_dimension(
     y_sizes: NDArray | None = None,
     minlength: str | float = 'auto',
     maxlength: str | float = 'auto',
-    interior_circles_only: bool = True,
+    interior_circles_only: bool | str = True,
     nbins: int = 50,
     bins: NDArray | int | None = None,
     point_reduction_factor: float = 1,
@@ -895,9 +895,24 @@ def ensemble_sandbox_renyi_dimension(
         ``0.33 * min array dimension`` respectively. The default
         ``minlength`` of 8× pixel size keeps the fit away from
         pixel-discretization noise at the smallest scales.
-    interior_circles_only : bool, default=True
-        If True, only sandbox centers at least ``maxlength`` from every
-        domain edge contribute, avoiding boundary truncation bias.
+    interior_circles_only : bool or {'truncate'}, default=True
+        Boundary handling for sandbox circles. Three modes are supported:
+
+        * ``True`` — only sandbox centers at least ``maxlength`` from every
+          domain edge contribute, so every circle fits entirely inside the
+          domain. Avoids truncation bias but discards small-radius
+          information from set points near the boundary.
+        * ``False`` — every set point is used as a center; circles that
+          extend past a domain edge are silently truncated, biasing
+          ``M_i(r)`` low at large ``r``.
+        * ``'truncate'`` — every set point is used as a center, but each
+          center's contribution is capped at radii ``r <= d_edge(center)``,
+          where ``d_edge`` is the distance to the nearest domain edge.
+          Each bin's partition function is then averaged over only the
+          centers admissible at that bin (``Z_q(r) = <M_i(r)^{q-1}>``
+          where the average is over centers with ``r <= d_edge_i``).
+          Recovers small-scale information that ``True`` discards while
+          avoiding the truncation bias of ``False``.
     nbins : int, default=50
         Number of log-spaced distance bins (used when ``bins`` is None).
     bins : np.ndarray or int, optional
@@ -998,7 +1013,21 @@ def ensemble_sandbox_renyi_dimension(
             f'reliable dimension estimation.'
         )
 
-    if interior_circles_only:
+    # Resolve the boundary-handling mode. Accept booleans for backward
+    # compatibility plus the string 'truncate' for the per-center cap.
+    if isinstance(interior_circles_only, str):
+        if interior_circles_only != 'truncate':
+            raise ValueError(
+                f"interior_circles_only={interior_circles_only!r} not "
+                f"supported (use True, False, or 'truncate')"
+            )
+        boundary_mode = 'truncate'
+    elif interior_circles_only:
+        boundary_mode = 'interior'
+    else:
+        boundary_mode = 'open'
+
+    if boundary_mode == 'interior':
         domain_width = locations_x[int(h / 2), w - 1] - locations_x[int(h / 2), 0]
         domain_height = locations_y[h - 1, int(w / 2)] - locations_y[0, int(w / 2)]
         interior_width = domain_width - 2 * maxlength
@@ -1019,9 +1048,11 @@ def ensemble_sandbox_renyi_dimension(
 
     bins_sq = bins ** 2
     max_bin = float(bins[-1])
+    max_bin_sq = float(bins_sq[-1])
 
     # ----- per-array kernel call, accumulate Z_total -----
     Z_total = np.zeros((Q, bins.shape[0]), dtype=np.float64)
+    N_per_bin_total = np.zeros(bins.shape[0], dtype=np.int64)
     n_centers_total = 0
 
     for array in binary_arrays:
@@ -1042,21 +1073,27 @@ def ensemble_sandbox_renyi_dimension(
         if all_set_coords.shape[0] == 0:
             continue
 
-        # Interior filter: keep set points at least maxlength from every edge
-        if interior_circles_only:
-            coord_locations_x = locations_x[all_set_coords[:, 0], all_set_coords[:, 1]]
-            coord_locations_y = locations_y[all_set_coords[:, 0], all_set_coords[:, 1]]
-            dist_to_left = coord_locations_x - locations_x[int(h / 2), 0]
-            dist_to_right = locations_x[int(h / 2), w - 1] - coord_locations_x
-            dist_to_top = coord_locations_y - locations_y[0, int(w / 2)]
-            dist_to_bottom = locations_y[h - 1, int(w / 2)] - coord_locations_y
-            min_dist_to_any_edge = np.minimum.reduce(
-                [dist_to_left, dist_to_right, dist_to_top, dist_to_bottom]
-            )
+        # Per-set-point distance to the nearest domain edge (used by both
+        # the interior filter and the truncate per-center cap).
+        coord_locations_x = locations_x[all_set_coords[:, 0], all_set_coords[:, 1]]
+        coord_locations_y = locations_y[all_set_coords[:, 0], all_set_coords[:, 1]]
+        dist_to_left = coord_locations_x - locations_x[int(h / 2), 0]
+        dist_to_right = locations_x[int(h / 2), w - 1] - coord_locations_x
+        dist_to_top = coord_locations_y - locations_y[0, int(w / 2)]
+        dist_to_bottom = locations_y[h - 1, int(w / 2)] - coord_locations_y
+        min_dist_to_any_edge = np.minimum.reduce(
+            [dist_to_left, dist_to_right, dist_to_top, dist_to_bottom]
+        )
+        del coord_locations_x, coord_locations_y
+        del dist_to_left, dist_to_right, dist_to_top, dist_to_bottom
+
+        if boundary_mode == 'interior':
             interior_mask = min_dist_to_any_edge >= maxlength
             sandbox_centers_idx = all_set_coords[interior_mask]
+            sandbox_centers_dedge = min_dist_to_any_edge[interior_mask]
         else:
             sandbox_centers_idx = all_set_coords
+            sandbox_centers_dedge = min_dist_to_any_edge
 
         if sandbox_centers_idx.shape[0] == 0:
             continue
@@ -1070,6 +1107,7 @@ def ensemble_sandbox_renyi_dimension(
                 np.arange(len(sandbox_centers_idx)), n_keep, replace=False
             )
             sandbox_centers_idx = sandbox_centers_idx[chosen]
+            sandbox_centers_dedge = sandbox_centers_dedge[chosen]
 
         # Convert to physical coordinates
         boundary_phys_x = locations_x[all_set_coords[:, 0], all_set_coords[:, 1]]
@@ -1082,22 +1120,51 @@ def ensemble_sandbox_renyi_dimension(
         center_phys = np.column_stack([center_phys_x, center_phys_y])
         n_centers_here = center_phys.shape[0]
         del set_mask, all_set_coords, sandbox_centers_idx
-        del center_phys_x, center_phys_y
+        del center_phys_x, center_phys_y, min_dist_to_any_edge
+
+        # Per-center maximum squared radius. For 'truncate' we cap at the
+        # squared distance to the nearest edge; otherwise we set the cap
+        # to the largest bin so every bin admits every center.
+        if boundary_mode == 'truncate':
+            r_max_sq_per_center = np.minimum(
+                sandbox_centers_dedge.astype(np.float64) ** 2, max_bin_sq
+            )
+        else:
+            r_max_sq_per_center = np.full(
+                n_centers_here, max_bin_sq, dtype=np.float64
+            )
+        del sandbox_centers_dedge
 
         # Sort boundary points by physical y for the kernel's bbox trick
         sort_order = np.argsort(boundary_phys[:, 1])
         sorted_boundary_phys = boundary_phys[sort_order]
         del sort_order, boundary_phys
 
-        Z_total += _sandbox_partition(
-            center_phys, sorted_boundary_phys, bins_sq, max_bin, q_arr, is_q1
+        Z_chunk, N_chunk = _sandbox_partition(
+            center_phys, sorted_boundary_phys, bins_sq, max_bin, q_arr, is_q1,
+            r_max_sq_per_center,
         )
+        Z_total += Z_chunk
+        N_per_bin_total += N_chunk
         n_centers_total += n_centers_here
 
-    # At q=1 the kernel accumulates sum_i log10 M_i, which scales as
-    # n_centers_total * D_1 * log10(r). Convert to per-center mean so the
-    # slope vs log10(r) is D_1 directly. Apply to every q==1 entry.
-    if n_centers_total > 0 and is_q1.any():
+    # 'truncate' mode: per-bin contributing-center count varies with r, so
+    # divide Z by N_per_bin to recover the per-center mean <M^(q-1)>(r).
+    # The slope of log <M^(q-1)> vs log r is then (q-1) D_q for q!=1 and
+    # D_1 for q=1, just like the interior/open paths whose effective
+    # N_per_bin is constant.
+    if boundary_mode == 'truncate':
+        with np.errstate(divide='ignore', invalid='ignore'):
+            for qi in range(Q):
+                Z_total[qi] = np.where(
+                    N_per_bin_total > 0,
+                    Z_total[qi] / np.maximum(N_per_bin_total, 1),
+                    0.0,
+                )
+    elif n_centers_total > 0 and is_q1.any():
+        # Legacy interior/open paths: at q=1 the kernel accumulates
+        # sum_i log10 M_i, which scales as n_centers_total * D_1 * log10(r).
+        # Convert to per-center mean. Apply to every q==1 entry.
         Z_total[is_q1, :] /= float(n_centers_total)
 
     # ----- linear regression per q -----
@@ -1512,11 +1579,21 @@ def _sandbox_partition(
     max_bin,             # float: sqrt(bins_sq[-1])
     qs,                  # (Q,) Rényi orders
     is_q1,               # (Q,) bool: True where qs[qi] is within tolerance of 1.0
+    r_max_sq_per_center, # (N_c,) per-center maximum squared radius. For the legacy
+                         #   modes, fill with bins_sq[-1] so every bin is admissible.
+                         #   For the 'truncate' mode, fill with squared distance to
+                         #   the nearest domain edge — bins above this are skipped.
 ):
     """For each center, compute M_i(r_k) = #set points within distance r_k.
-    Accumulate Z[qi, k] across centers:
-        Z[qi, k] = sum_i M_i(r_k)^(qs[qi] - 1)        (q != 1)
-        Z[qi, k] = sum_i log10(M_i(r_k))              (q == 1, set elementwise via is_q1)
+    Accumulate Z[qi, k] across centers and counts of contributing centers
+    per bin N_per_bin[k]:
+        Z[qi, k] = sum_{i: bins[k] <= r_max_i} M_i(r_k)^(qs[qi] - 1)        (q != 1)
+        Z[qi, k] = sum_{i: bins[k] <= r_max_i} log10(M_i(r_k))              (q == 1)
+        N_per_bin[k] = #{i: bins[k] <= r_max_i}
+
+    For the legacy boundary modes, ``r_max_sq_per_center[i] = bins_sq[-1]``
+    for every center, so every bin admits every center and ``N_per_bin``
+    equals the total center count for all k — caller can ignore it.
 
     Centers are assumed to be drawn from the same set as sorted_boundary,
     so each center self-counts at distance 0 (M_i >= 1 always at any
@@ -1538,6 +1615,7 @@ def _sandbox_partition(
 
     # Per-thread accumulators (avoid races, no atomics needed)
     Z_per_thread = np.zeros((n_threads, Q, B), dtype=np.float64)
+    N_per_bin_per_thread = np.zeros((n_threads, B), dtype=np.int64)
     # Per-thread scratch histograms, reused across centers
     hist_per_thread = np.zeros((n_threads, B), dtype=np.int64)
 
@@ -1547,33 +1625,52 @@ def _sandbox_partition(
         thread_id = numba.get_thread_id()
         cx = centers_phys[i, 0]
         cy = centers_phys[i, 1]
+        r_max_sq_i = r_max_sq_per_center[i]
+        # Per-center search radius: never larger than the global max_bin,
+        # but tightened by the per-center cap to save work.
+        if r_max_sq_i < bins_sq[B - 1]:
+            search_r = np.sqrt(r_max_sq_i)
+        else:
+            search_r = max_bin
 
-        # Zero this thread's scratch histogram
-        for k in range(B):
+        # k_max_i = #{k : bins_sq[k] <= r_max_sq_i}
+        # All bins k < k_max_i are admissible for this center.
+        k_max_i = np.searchsorted(bins_sq, r_max_sq_i, side='right')
+        if k_max_i > B:
+            k_max_i = B
+        if k_max_i == 0:
+            # Nearest edge is closer than the smallest bin: skip center.
+            continue
+
+        # Zero this thread's scratch histogram (only up to k_max_i needed)
+        for k in range(k_max_i):
             hist_per_thread[thread_id, k] = 0
 
         # y bounding box via binary search
-        lo = np.searchsorted(sorted_y, cy - max_bin, side='left')
-        hi = np.searchsorted(sorted_y, cy + max_bin, side='right')
+        lo = np.searchsorted(sorted_y, cy - search_r, side='left')
+        hi = np.searchsorted(sorted_y, cy + search_r, side='right')
 
         for j in range(lo, hi):
             bx = sorted_boundary[j, 0]
-            if abs(bx - cx) > max_bin:
+            if abs(bx - cx) > search_r:
                 continue
             dx = cx - bx
             dy = cy - sorted_boundary[j, 1]
             dist_sq = dx * dx + dy * dy
+            if dist_sq > r_max_sq_i:
+                continue
             bin_idx = np.searchsorted(bins_sq, dist_sq, side='right')
-            if bin_idx < B:
+            if bin_idx < k_max_i:
                 hist_per_thread[thread_id, bin_idx] += 1
 
         # Per-center cumulative sum gives M_i(bins[k]) at each k.
         # Then accumulate M_i^(q-1) (or log10(M_i) at q==1) into Z[qi, k].
-        # is_q1 is checked per qi so duplicate q==1 entries all get the
-        # log form (vs. a single q1_index, which only handles the first).
+        # Only k < k_max_i is admissible: bins above the per-center cap
+        # would extend beyond the domain edge.
         M = 0
-        for k in range(B):
+        for k in range(k_max_i):
             M += hist_per_thread[thread_id, k]
+            N_per_bin_per_thread[thread_id, k] += 1
             if M > 0:
                 M_f = float(M)
                 for qi in range(Q):
@@ -1585,11 +1682,14 @@ def _sandbox_partition(
 
     # Reduce across threads
     Z = np.zeros((Q, B), dtype=np.float64)
+    N_per_bin = np.zeros(B, dtype=np.int64)
     for t in range(n_threads):
         for qi in range(Q):
             for k in range(B):
                 Z[qi, k] += Z_per_thread[t, qi, k]
-    return Z
+        for k in range(B):
+            N_per_bin[k] += N_per_bin_per_thread[t, k]
+    return Z, N_per_bin
 
 
 def coarsen_array(array: NDArray, factor: int) -> NDArray:
