@@ -29,10 +29,13 @@ from objscale import ensemble_sandbox_renyi_dimension
 N_REALIZATIONS = int(os.environ.get('TC_N', 10))
 SIZE = int(os.environ.get('TC_SIZE', 4096))
 H = float(os.environ.get('TC_H', 0.5))
+PRF = float(os.environ.get('TC_PRF', 1))
 NBINS = 50
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 _TAG = f'{N_REALIZATIONS}x{SIZE}_H{H:g}'
+if PRF != 1:
+    _TAG += f'_prf{PRF:g}'
 NPZ_PATH = os.path.join(OUT_DIR, f'truncate_circles_partition_{_TAG}.npz')
 FIG_PATH = os.path.join(OUT_DIR, f'truncate_circles_local_slopes_{_TAG}.png')
 
@@ -60,6 +63,7 @@ def run_mode(fields, mode):
         set='edge',
         interior_circles_only=mode,
         nbins=NBINS,
+        point_reduction_factor=PRF,
         return_values=True,
     )
     dt = time.time() - t0
@@ -127,11 +131,13 @@ def main():
     ax.set_ylim(1.30, 1.70)
     ax.set_xlabel(r'circle radius $l$ (pixels)', fontsize=11)
     ax.set_ylabel(r'local $D_2 = d\log Z_2 / d\log l$', fontsize=11)
-    ax.set_title(
+    title = (
         f'fBm H={H}, threshold-zero edge set, '
-        f'{N_REALIZATIONS}x{SIZE}^2 ensemble',
-        fontsize=11,
+        f'{N_REALIZATIONS}x{SIZE}^2 ensemble'
     )
+    if PRF != 1:
+        title += f'  (prf={PRF:g})'
+    ax.set_title(title, fontsize=11)
     ax.tick_params(direction='in', labelsize=9)
     for s in ('top', 'right'):
         ax.spines[s].set_visible(False)
