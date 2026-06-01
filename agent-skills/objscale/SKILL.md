@@ -118,6 +118,8 @@ objscale.ensemble_correlation_dimension(
 
 Thin wrapper around `ensemble_sandbox_renyi_dimension(..., q=2.0, set='edge')`. The sandbox q=2 partition function `sum_i M_i(r)` is exactly the Grassberger-Procaccia correlation integral, so this name is preserved as the standard q=2 entry point.
 
+`interior_circles_only` defaults to `False`; see ["Correlation dimension and domain boundary effects"](https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html) for the rationale.
+
 ```python
 objscale.ensemble_sandbox_renyi_dimension(
     binary_arrays,               # Binary arrays (list or single)

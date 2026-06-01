@@ -106,7 +106,10 @@ def ensemble_correlation_dimension(
         the minimum array dimension.
     interior_circles_only : bool, default=False
         If True, only use circle centers that are at least maxlength distance from
-        all array edges to avoid boundary effects.
+        all array edges to avoid boundary effects. Defaults to False; see the
+        section "Correlation dimension and domain boundary effects" at
+        https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html
+        for the rationale.
     return_C_l : bool, default=False
         If True, return dimension, error, bins, C_l. Otherwise, return dimension, error.
     bins : None, int, or array-like, optional
@@ -897,7 +900,11 @@ def ensemble_sandbox_renyi_dimension(
         pixel-discretization noise at the smallest scales.
     interior_circles_only : bool, default=False
         If True, only sandbox centers at least ``maxlength`` from every
-        domain edge contribute, avoiding boundary truncation bias.
+        domain edge contribute, avoiding boundary truncation bias. Defaults
+        to False; see the section "Correlation dimension and domain boundary
+        effects" at
+        https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html
+        for the rationale.
     nbins : int, default=50
         Number of log-spaced distance bins (used when ``bins`` is None).
     bins : np.ndarray or int, optional
