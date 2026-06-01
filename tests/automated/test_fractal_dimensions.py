@@ -644,6 +644,7 @@ def test_ensemble_sandbox_renyi_dimension_analytic_oracle():
     D, err = objscale.ensemble_sandbox_renyi_dimension(
         [arr], q=qs, set='ones',
         minlength=2, maxlength=40, nbins=20,
+        interior_circles_only=True,
     )
     for q, d in zip(qs, D):
         diff = abs(d - 2.0)
@@ -658,6 +659,7 @@ def test_ensemble_sandbox_renyi_dimension_analytic_oracle():
     D_sc, _ = objscale.ensemble_sandbox_renyi_dimension(
         arr, q=2.0, set='ones',
         minlength=2, maxlength=40, nbins=20,
+        interior_circles_only=True,
     )
     assert abs(D_sc - D[3]) < 1e-10, (
         f"scalar q=2 ({D_sc:.10f}) != vector q=2 entry ({D[3]:.10f})"

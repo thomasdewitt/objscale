@@ -108,7 +108,7 @@ objscale.ensemble_correlation_dimension(
     y_sizes=None,                # Pixel sizes in y
     minlength='auto',            # Min scale (default: 8x pixel size)
     maxlength='auto',            # Max scale (default: 0.33x domain size)
-    interior_circles_only=True,  # Avoid boundary effects (recommended!)
+    interior_circles_only=False, # If True, only use centers >=maxlength from edges
     return_C_l=False,            # Return (dim, err, bins, C_l)
     bins=None,                   # Custom bin edges, or int for number of bins
     point_reduction_factor=1,    # Subsample points (>=1, for speed)
@@ -127,7 +127,7 @@ objscale.ensemble_sandbox_renyi_dimension(
     y_sizes=None,                # Pixel sizes in y
     minlength='auto',            # Min scale
     maxlength='auto',            # Max scale
-    interior_circles_only=True,  # Avoid boundary effects
+    interior_circles_only=False, # If True, only use centers >=maxlength from edges
     nbins=50,                    # Number of scale bins when bins=None
     bins=None,                   # Custom bin edges or int
     point_reduction_factor=1,    # Subsample sandbox centers (>=1)

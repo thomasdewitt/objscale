@@ -68,7 +68,7 @@ def ensemble_correlation_dimension(
     y_sizes: NDArray | None = None,
     minlength: str | float = 'auto',
     maxlength: str | float = 'auto',
-    interior_circles_only: bool = True,
+    interior_circles_only: bool = False,
     return_C_l: bool = False,
     bins: NDArray | int | None = None,
     point_reduction_factor: float = 1,
@@ -104,9 +104,9 @@ def ensemble_correlation_dimension(
     maxlength : str or float, default='auto'
         Maximum length scale for correlation calculation. If 'auto', uses 0.33 times
         the minimum array dimension.
-    interior_circles_only : bool, default=True
+    interior_circles_only : bool, default=False
         If True, only use circle centers that are at least maxlength distance from
-        all array edges to avoid boundary effects. Recommended!
+        all array edges to avoid boundary effects.
     return_C_l : bool, default=False
         If True, return dimension, error, bins, C_l. Otherwise, return dimension, error.
     bins : None, int, or array-like, optional
@@ -833,7 +833,7 @@ def ensemble_sandbox_renyi_dimension(
     y_sizes: NDArray | None = None,
     minlength: str | float = 'auto',
     maxlength: str | float = 'auto',
-    interior_circles_only: bool = True,
+    interior_circles_only: bool = False,
     nbins: int = 50,
     bins: NDArray | int | None = None,
     point_reduction_factor: float = 1,
@@ -895,7 +895,7 @@ def ensemble_sandbox_renyi_dimension(
         ``0.33 * min array dimension`` respectively. The default
         ``minlength`` of 8× pixel size keeps the fit away from
         pixel-discretization noise at the smallest scales.
-    interior_circles_only : bool, default=True
+    interior_circles_only : bool, default=False
         If True, only sandbox centers at least ``maxlength`` from every
         domain edge contribute, avoiding boundary truncation bias.
     nbins : int, default=50
