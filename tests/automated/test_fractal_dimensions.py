@@ -174,7 +174,16 @@ def test_ensemble_box_dimension(seed='3x3_center', iterations=None, tolerance=0.
 
 
 def test_ensemble_correlation_dimension(seed='3x3_center', iterations=None, tolerance=0.01):
-    """Test ensemble correlation dimension."""
+    """Test ensemble correlation dimension.
+
+    Flaky note: uses point_reduction_factor=500, i.e. a random ~1/500
+    subsample of sandbox centers, and does NOT seed np.random. The
+    resulting sampling variance occasionally (~15% of runs) pushes the
+    estimate past the tight tolerance=0.01, almost always biased slightly
+    high. Seed np.random before the call (as
+    test_ensemble_correlation_dimension_nonuniform_integer_repeats does)
+    to make it deterministic.
+    """
     if iterations is None:
         iterations = default_iterations(seed)
     expected_D = expected_ensemble_dimension(seed)
@@ -201,6 +210,11 @@ def test_ensemble_correlation_dimension_nonuniform(seed='3x3_center', iterations
     - Uniform scaling: dx=0.5, dy=0.5, dx=1/3, dy=1/3
     - Mid-array resolution change: dx halves or dy halves partway through
     The derived dimension should match the expected fractal dimension.
+
+    Flaky note: like test_ensemble_correlation_dimension, this uses an
+    unseeded point_reduction_factor=500 random subsample, so it
+    occasionally trips the tight tolerance=0.01. Seed np.random to make it
+    deterministic.
     """
     if iterations is None:
         iterations = default_iterations(seed)
