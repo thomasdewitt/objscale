@@ -13,7 +13,7 @@ Object-based analysis functions for fractal dimensions and size distributions in
 
 ## Critical Usage Note
 
-**When analyzing multiple arrays (e.g., multiple cloud field images), pass them ALL AT ONCE as a list.** This applies to all functions that accept lists of arrays: fractal dimensions (ensemble and individual), size distributions, etc. Do not call functions separately for each array and combine results - these are not linear operations.
+**When analyzing multiple arrays (e.g., multiple cloud field images), pass them ALL AT ONCE as a list.** This applies to all functions that accept lists of arrays: fractal dimensions (ensemble and individual), size distributions, etc. Do not call functions separately for each array and combine results - these are not, in general, linear operations.
 
 ```python
 # CORRECT - pass all arrays at once
@@ -27,59 +27,75 @@ exp, err = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 #     result = some_objscale_function(arr)  # NO!
 ```
 
+If you are attempting to analyze a large dataset that does not fit in memory, you MUST carefully consider whether the specific function you are using is linear. In the above example, the output dimensions/exponents are computed using a linear regression and are NOT linear with the inputs. Other functions, such as bin counts from a size distribution, can sometimes return linear outputs. You may have to compute the regression yourself. You MUST carefully consider cases where loops are necessary (is the function linear? is each input chunk the same size? does `nan` prevalence change?), and when you are unsure explain the situation to your user!
+
 ## When to Use Which Function
 
 ### Fractal Dimensions
 
-| Task | Function | Notes |
-|------|----------|-------|
-| **Recommended** ensemble fractal dimension | `ensemble_correlation_dimension` | Most robust method |
-| Correlation dimension of a single object | `individual_correlation_dimension` | Isolates Nth largest structure, computes correlation dim |
-| Individual object fractal dimension (perimeter-area) | `individual_fractal_dimension` | Uses perimeter-area scaling with optional binning |
-| Box-counting dimension | `ensemble_box_dimension` | Classic method, prefer correlation |
+| Task                                                 | Function                           | Notes                                                                      |
+| ---------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------- |
+| **Recommended** ensemble fractal dimension (q=2)     | `ensemble_correlation_dimension`   | Thin wrapper around `ensemble_sandbox_renyi_dimension(q=2.0)`              |
+| Generalized Rényi dimension D_q via sandbox          | `ensemble_sandbox_renyi_dimension` | Set-centered balls at continuous radii. Best for any q except q=0.         |
+| Generalized Rényi dimension D_q via box counting     | `ensemble_box_renyi_dimension`     | Fixed-grid tiles. Natural for q=0; noisier than sandbox at q≠0.            |
+| Box-counting dimension (q=0)                         | `ensemble_box_dimension`           | Box-Renyi at q=0.                                                          |
+| Information dimension (q=1)                          | `ensemble_information_dimension`   | Defaults to `method='sandbox'`; pass `method='box'` for the box estimator. |
+| Correlation dimension of a single object             | `individual_correlation_dimension` | Isolates Nth largest structure, computes correlation dim                   |
+| Individual object fractal dimension (perimeter-area) | `individual_fractal_dimension`     | Uses perimeter-area scaling with optional binning                          |
+
+**Two estimators, one quantity.** Box and sandbox both estimate the same Rényi dimension D_q, but sample the partition function differently. Box counting tiles space with a fixed grid; sandbox places balls on set points and counts neighbors at continuous radii. They agree for monofractal sets and disagree only at finite-size scales. Use sandbox by default; box is the natural choice only for q=0 (where sandbox uses an awkward inverse-mass form).
 
 **Note**: Do not use `ensemble_coarsening_dimension` - it has ambiguity issues with binary array coarsening.
 
 ### Size Distributions
 
-| Task | Function | Notes |
-|------|----------|-------|
-| Power-law exponent | `finite_array_powerlaw_exponent` | **Always prefer this** - accounts for domain truncation |
-| Full distribution with truncation info | `finite_array_size_distribution` | Returns truncated/non-truncated counts |
-| Simple distribution (no corrections) | `array_size_distribution` | Only for special cases |
+| Task                                   | Function                         | Notes                                                   |
+| -------------------------------------- | -------------------------------- | ------------------------------------------------------- |
+| Power-law exponent                     | `finite_array_powerlaw_exponent` | **Always prefer this** - accounts for domain truncation |
+| Full distribution with truncation info | `finite_array_size_distribution` | Returns truncated/non-truncated counts                  |
+| Simple distribution (no corrections)   | `array_size_distribution`        | Only for special cases                                  |
 
 **IMPORTANT**: Always use `finite_*` functions for size distributions. They properly account for objects truncated by domain boundaries.
 
 **For plotting**: Use `finite_array_powerlaw_exponent` with `return_counts=True` to get log10 bin middles and counts suitable for plotting the distribution.
 
+**Theory — finite domain truncation (DeWitt & Garrett 2024)**: Objects in finite domains can be *truncated* (touching the domain boundary) or *non-truncated* (entirely interior). Truncated objects have unknown true sizes because the portion beyond the boundary is unmeasured. Larger objects are more likely to be truncated, so the large end of a size distribution is progressively contaminated. The `finite_*` functions correct for this by:
+
+1. Binning sizes in log-space and separately counting truncated vs. non-truncated objects per bin.
+2. Excluding bins where the fraction of truncated objects exceeds `truncation_threshold` (default 0.5). This removes the large-size tail where most objects are cut off by the domain edge.
+3. Excluding bins with fewer than `min_count_threshold` counts (default 30). Below ~24 counts, bin-count statistics are non-Gaussian and least-squares regression on log-transformed counts becomes unreliable.
+4. Fitting a power law via linear regression to the surviving "good" bins.
+
+`finite_array_size_distribution` returns all four arrays — `(bin_middles, nontruncated_counts, truncated_counts, truncation_index)` — so you can inspect which bins survived and plot truncated vs. non-truncated counts separately. `truncation_index` is the first bin index where the truncation fraction exceeds the threshold. `finite_array_powerlaw_exponent` does steps 1–4 internally and returns the fitted exponent directly.
+
 ### Object Analysis
 
-| Task | Function |
-|------|----------|
-| Label connected components | `label_structures` |
-| Get structure areas (fast, O(n)) | `get_structure_areas` |
-| Get structure perimeters (fast, O(n)) | `get_structure_perimeters` |
-| Get structure height and width | `get_structure_height_width` |
-| Get all four properties at once | `get_structure_props` |
-| Get every boundary perimeter (incl. nested) | `get_every_boundary_perimeter` |
-| Total perimeter of all objects | `total_perimeter` |
-| Count objects | `total_number` |
-| Extract Nth largest object | `isolate_nth_largest_structure` |
-| Remove border-touching objects | `remove_structures_touching_border_nan` |
-| Fill holes in objects | `remove_structure_holes` |
-| Label objects by size | `label_size` |
-| Clear border-adjacent structures | `clear_border_adjacent` |
+| Task                                        | Function                                |
+| ------------------------------------------- | --------------------------------------- |
+| Label connected components                  | `label_structures`                      |
+| Get structure areas (fast, O(n))            | `get_structure_areas`                   |
+| Get structure perimeters (fast, O(n))       | `get_structure_perimeters`              |
+| Get structure height and width              | `get_structure_height_width`            |
+| Get all four properties at once             | `get_structure_props`                   |
+| Get every boundary perimeter (incl. nested) | `get_every_boundary_perimeter`          |
+| Total perimeter of all objects              | `total_perimeter`                       |
+| Count objects                               | `total_number`                          |
+| Extract Nth largest object                  | `isolate_nth_largest_structure`         |
+| Remove border-touching objects              | `remove_structures_touching_border_nan` |
+| Fill holes in objects                       | `remove_structure_holes`                |
+| Label objects by size                       | `label_size`                            |
+| Clear border-adjacent structures            | `clear_border_adjacent`                 |
 
 ### Utilities
 
-| Task | Function |
-|------|----------|
-| Reduce array resolution | `coarsen_array` |
-| Linear regression with errors | `linear_regression` |
-| Add border to array | `encase_in_value` |
-| Find boundary pixel coordinates | `get_coords_of_boundaries` |
+| Task                             | Function                         |
+| -------------------------------- | -------------------------------- |
+| Reduce array resolution          | `coarsen_array`                  |
+| Linear regression with errors    | `linear_regression`              |
+| Add border to array              | `encase_in_value`                |
+| Find boundary pixel coordinates  | `get_coords_of_boundaries`       |
 | Convert pixel sizes to locations | `get_locations_from_pixel_sizes` |
-| Set number of parallel threads | `set_num_threads` |
+| Set number of parallel threads   | `set_num_threads`                |
 
 ## Function Signatures
 
@@ -90,15 +106,36 @@ objscale.ensemble_correlation_dimension(
     arrays,                      # Binary arrays (list or single)
     x_sizes=None,                # Pixel sizes in x (2D array, same shape as arrays)
     y_sizes=None,                # Pixel sizes in y
-    minlength='auto',            # Min scale (default: 3x pixel size)
+    minlength='auto',            # Min scale (default: 8x pixel size)
     maxlength='auto',            # Max scale (default: 0.33x domain size)
-    interior_circles_only=True,  # Avoid boundary effects (recommended!)
+    interior_circles_only=False, # If True, only use centers >=maxlength from edges
     return_C_l=False,            # Return (dim, err, bins, C_l)
     bins=None,                   # Custom bin edges, or int for number of bins
     point_reduction_factor=1,    # Subsample points (>=1, for speed)
     nbins=50                     # Number of scale bins when bins=None
 ) -> (dimension, error) | (dimension, error, bins, C_l)
 ```
+
+Thin wrapper around `ensemble_sandbox_renyi_dimension(..., q=2.0, set='edge')`. The sandbox q=2 partition function `sum_i M_i(r)` is exactly the Grassberger-Procaccia correlation integral, so this name is preserved as the standard q=2 entry point.
+
+```python
+objscale.ensemble_sandbox_renyi_dimension(
+    binary_arrays,               # Binary arrays (list or single)
+    q=2.0,                       # Rényi order(s); scalar or 1-D array
+    set='edge',                  # 'edge' (one-sided edge mask) or 'ones'
+    x_sizes=None,                # Pixel sizes in x
+    y_sizes=None,                # Pixel sizes in y
+    minlength='auto',            # Min scale
+    maxlength='auto',            # Max scale
+    interior_circles_only=False, # If True, only use centers >=maxlength from edges
+    nbins=50,                    # Number of scale bins when bins=None
+    bins=None,                   # Custom bin edges or int
+    point_reduction_factor=1,    # Subsample sandbox centers (>=1)
+    return_values=False          # Return (D_q, err, bins, Z)
+) -> (D_q, err) | (D_q, err, bins, Z)
+```
+
+Sandbox-method Rényi dimension D_q. For each set point, count neighbors `M_i(r)` within radius r; partition function is `Z_q(r) = sum_i M_i^(q-1)` for `q != 1` (slope vs log r divided by `q-1` gives `D_q`), or per-center mean `<log10 M(r)>` for `q == 1` (slope is `D_1` directly). Strict generalization of Grassberger-Procaccia (`q=2` is the pair count). Better than box counting at `q != 0`; for `q = 0` use `ensemble_box_dimension` because sandbox q=0 needs the inverse-mass form. Reference: Tél, Fülöp, Vicsek 1989, Physica A 159; Vicsek 1992 textbook ch. 3.
 
 ```python
 objscale.individual_correlation_dimension(
@@ -129,15 +166,44 @@ objscale.individual_fractal_dimension(
 ```
 
 ```python
+objscale.ensemble_box_renyi_dimension(
+    binary_arrays,         # Binary arrays (list or single)
+    q=0.0,                 # Rényi order(s); scalar or 1-D array
+    set='edge',            # 'edge' (one-sided edge mask: 1-pixels with a 0-neighbor) or 'ones'
+    box_sizes='default',   # Custom box sizes or 'default' (powers of 2)
+    max_box_size=None,     # Largest box in pixels (None = min(arr.shape))
+    min_box_size=8,        # Smallest box in pixels
+    box_origin_shift=(0.0, 0.0),  # Fractional (sx, sy) shift of box grid origin
+    return_values=False    # Return (dim, err, box_sizes, partition)
+) -> (D_q, err) | (D_q, err, box_sizes, partition)
+```
+
+Box-counting Rényi dimension D_q. Always uses interior-only boxes (input is trimmed to a multiple of the current box size). For q != 1 the normalization is geometric (n_i / V where V is total interior pixel area); for q == 1 the Shannon entropy form is used. Use this for q=0 (where it's the natural box-counting dimension) and as a robustness comparison against the sandbox method.
+
+```python
 objscale.ensemble_box_dimension(
     binary_arrays,         # Binary arrays (list or single)
-    set='edge',            # 'edge' (boundaries) or 'ones' (all 1s)
-    min_pixels=1,          # Largest box size constraint
-    min_box_size=2,        # Smallest box size
+    set='edge',            # 'edge' or 'ones'
+    max_box_size=None,     # Largest box in pixels (None = min(arr.shape))
+    min_box_size=8,        # Smallest box in pixels
     box_sizes='default',   # Custom box sizes or 'default' (powers of 2)
     return_values=False    # Return (dim, err, box_sizes, counts)
-) -> (dimension, error) | (dimension, error, box_sizes, mean_counts)
+) -> (D_0, err) | (D_0, err, box_sizes, n_boxes)
 ```
+
+Thin wrapper around `ensemble_box_renyi_dimension(..., q=0)`. Box counting is the natural q=0 estimator (sandbox at q=0 uses an awkward inverse-mass form).
+
+```python
+objscale.ensemble_information_dimension(
+    binary_arrays,         # Binary arrays (list or single)
+    method='sandbox',      # 'sandbox' (default) or 'box'
+    set='edge',            # 'edge' or 'ones'
+    return_values=False,   # Return (dim, err, bins, partition)
+    **kwargs,              # Method-specific options forwarded to underlying function
+) -> (D_1, err) | (D_1, err, bins, partition)
+```
+
+Information dimension D_1 (the q=1 Rényi dimension). Dispatches to `ensemble_sandbox_renyi_dimension(q=1)` by default, or `ensemble_box_renyi_dimension(q=1)` with `method='box'`. Sandbox is the default because it has lower grid-quantization noise at q=1. Method-specific options (`minlength`, `maxlength`, ... for sandbox; `max_box_size`, `box_sizes`, ... for box) are forwarded via `**kwargs`.
 
 ### Size Distributions
 
@@ -350,6 +416,7 @@ objscale.encase_in_value(
 ## Handling Non-Rectangular Domains
 
 Use `np.nan` to mark regions outside your domain of interest:
+
 - Objects touching nan boundaries are treated as truncated
 - Perimeter is not counted along nan boundaries
 - Enables arbitrary domain shapes

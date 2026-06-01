@@ -65,8 +65,11 @@ def label_structures(
         Number of connected components found (0 if none).
     """
     nan_mask = np.isnan(array)
-    no_nans = array.copy()
-    no_nans[nan_mask] = 0
+    if nan_mask.any():
+        no_nans = array.copy()
+        no_nans[nan_mask] = 0
+    else:
+        no_nans = array
     if np.count_nonzero(no_nans) == 0:
         return None, None, 0
     labelled_array, n_labels = label(no_nans.astype(bool), structure, output=np.float32)
@@ -681,13 +684,13 @@ def remove_structures_touching_border_nan(array: NDArray) -> NDArray:
     if array.ndim != 2:
         raise ValueError('array not 2-dimensional')
 
-    nanmask = np.isnan(array).astype(int)
+    nanmask = np.isnan(array).astype(np.int8)
     edge_nan_mask = (nanmask - clear_border_adjacent(nanmask)).astype(bool)
 
     with_edge = array.copy()
     with_edge[edge_nan_mask] = 1
 
-    cleared = clear_border_adjacent(with_edge).astype(float)
+    cleared = clear_border_adjacent(with_edge).astype(np.float32)
     cleared[edge_nan_mask] = np.nan
     cleared[np.isnan(array)] = np.nan
     return cleared

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 from numpy.typing import NDArray
+import warnings
 from warnings import warn
 from ._object_analysis import (
     label_structures,
@@ -22,6 +23,17 @@ __all__ = [
     'finite_array_powerlaw_exponent',
     'array_size_distribution',
 ]
+
+
+def _normalize_variable(variable, stacklevel=3):
+    """Map deprecated ``'perimeter'`` to ``'summed perimeter'`` with a warning."""
+    if variable == 'perimeter':
+        warnings.warn(
+            "variable='perimeter' is deprecated, use 'summed perimeter' instead.",
+            DeprecationWarning, stacklevel=stacklevel,
+        )
+        return 'summed perimeter'
+    return variable
 
 
 def finite_array_size_distribution(
@@ -49,8 +61,9 @@ def finite_array_size_distribution(
         and no data has np.nan. Interior nans are treated like 0's, except the
         perimeter along them is not counted.
     variable : str
-        Object attribute to bin by. Options: 'area', 'perimeter', 'nested perimeter',
-        'height', 'width'. See Notes for definitions.
+        Object attribute to bin by. Options: ``'area'``, ``'summed perimeter'``,
+        ``'nested perimeter'``, ``'height'``, ``'width'``. See Notes for
+        definitions. ``'perimeter'`` is accepted but deprecated.
     x_sizes : np.ndarray or list, optional
         Pixel sizes in the x direction. If None, assume all pixel dimensions are 1.
         If np.ndarray, use these for each array in 'arrays'. If list, assume
@@ -90,16 +103,18 @@ def finite_array_size_distribution(
     -----
     Variable definitions:
 
-    - 'perimeter': Sum of pixel edge lengths between all pixels within a structure and
-      neighboring values of 0. Does not include perimeter adjacent to a nan.
-      A donut shaped structure returns a single value.
-    - 'nested perimeter': Sum of pixel edge lengths between all pixels that are between a structure
-      and a neighboring region of 0s. Does not include perimeter adjacent to a nan.
-      A donut shaped structure returns two values: one for the inner circle and one for the outer.
+    - 'summed perimeter': Sum of pixel edge lengths between all pixels within a
+      structure and neighboring values of 0. Does not include perimeter adjacent
+      to a nan. A donut shaped structure returns a single value.
+    - 'nested perimeter': Sum of pixel edge lengths between all pixels that are
+      between a structure and a neighboring region of 0s. Does not include
+      perimeter adjacent to a nan. A donut shaped structure returns two values:
+      one for the inner circle and one for the outer.
     - 'area': Sum of individual pixel areas constituting the structure.
-    - 'length' or 'width': Overall distance between the farthest two points in a structure in
-      the x- or y- direction.
+    - 'length' or 'width': Overall distance between the farthest two points in a
+      structure in the x- or y- direction.
     """
+    variable = _normalize_variable(variable)
     if isinstance(arrays, np.ndarray):
         arrays = [arrays]
     if x_sizes is None:
@@ -136,7 +151,7 @@ def finite_array_size_distribution(
         # Encase the array in nans to ensure objects in contact with the edge are considered truncated
         array = encase_in_value(array)
 
-        if variable in ['perimeter','area','height','width']:
+        if variable in ['summed perimeter','area','height','width']:
             no_truncated = remove_structures_touching_border_nan(array)
             truncated_only = array - no_truncated
 
@@ -196,7 +211,7 @@ def finite_array_powerlaw_exponent(
     Calculate the power-law exponent for size distributions of structures.
 
     Calculates the power-law exponent for a list of binary arrays, where 'size' phi
-    can be perimeter, area, length, or width::
+    can be summed perimeter, area, length, or width::
 
         n(phi) ∝ phi^{-(1+exponent)}
 
@@ -211,8 +226,9 @@ def finite_array_powerlaw_exponent(
         and no data has np.nan. Interior nans are treated like 0's, except the
         perimeter along them is not counted.
     variable : str
-        Object attribute to bin by. Options: 'area', 'perimeter', 'nested perimeter',
-        'height', 'width'. See Notes for definitions.
+        Object attribute to bin by. Options: ``'area'``, ``'summed perimeter'``,
+        ``'nested perimeter'``, ``'height'``, ``'width'``. See Notes for
+        definitions. ``'perimeter'`` is accepted but deprecated.
     x_sizes : np.ndarray or list, optional
         Pixel sizes in the x direction. If None, assume all pixel dimensions are 1.
         If np.ndarray, use these for each array in 'arrays'. If list, assume
@@ -252,16 +268,17 @@ def finite_array_powerlaw_exponent(
     -----
     Variable definitions:
 
-    - 'perimeter': Sum of pixel edge lengths between all pixels within a structure and
-      neighboring values of 0. Does not include perimeter adjacent to a nan.
-      A donut shaped structure returns a single value.
-    - 'nested perimeter': Sum of pixel edge lengths between all pixels that are between
-      a structure and a neighboring region of 0s. Does not include perimeter adjacent
-      to a nan. A donut shaped structure returns two values.
+    - 'summed perimeter': Sum of pixel edge lengths between all pixels within a
+      structure and neighboring values of 0. Does not include perimeter adjacent
+      to a nan. A donut shaped structure returns a single value.
+    - 'nested perimeter': Sum of pixel edge lengths between all pixels that are
+      between a structure and a neighboring region of 0s. Does not include
+      perimeter adjacent to a nan. A donut shaped structure returns two values.
     - 'area': Sum of individual pixel areas constituting the structure.
     - 'length' or 'width': Overall distance between the farthest two points in a
       structure in the x- or y- direction.
     """
+    variable = _normalize_variable(variable)
     log_bin_middles, nontruncated_counts, truncated_counts, truncation_index = finite_array_size_distribution(
         arrays=arrays,
         variable=variable,
@@ -321,8 +338,9 @@ def array_size_distribution(
         and no data has np.nan. Nans are treated like 0's, except the perimeter along
         them is not counted.
     variable : str, default='area'
-        Object attribute to bin by. Options: 'area', 'perimeter', 'nested perimeter',
-        'height', 'width'. See Notes for definitions.
+        Object attribute to bin by. Options: ``'area'``, ``'summed perimeter'``,
+        ``'nested perimeter'``, ``'height'``, ``'width'``. See Notes for
+        definitions. ``'perimeter'`` is accepted but deprecated.
     bins : int or array-like, default=30
         If int, auto calculate bin locations and make that number of bins.
         If 1-D array: use these as bin edges.
@@ -355,21 +373,22 @@ def array_size_distribution(
     -----
     Variable definitions:
 
-    - 'perimeter': Sum of pixel edge lengths between all pixels within a structure and
-      neighboring values of 0. Does not include perimeter adjacent to a nan.
-      A donut shaped structure returns a single value.
-    - 'nested perimeter': Sum of pixel edge lengths between all pixels that are between
-      a structure and a neighboring region of 0s. Does not include perimeter adjacent
-      to a nan. A donut shaped structure returns two values.
+    - 'summed perimeter': Sum of pixel edge lengths between all pixels within a
+      structure and neighboring values of 0. Does not include perimeter adjacent
+      to a nan. A donut shaped structure returns a single value.
+    - 'nested perimeter': Sum of pixel edge lengths between all pixels that are
+      between a structure and a neighboring region of 0s. Does not include
+      perimeter adjacent to a nan. A donut shaped structure returns two values.
     - 'area': Sum of individual pixel areas constituting the structure.
     - 'length' or 'width': Overall distance between the farthest two points in a
       structure in the x- or y- direction.
     """
+    variable = _normalize_variable(variable)
     if x_sizes is None:
         x_sizes = np.ones(array.shape, dtype=np.float32)
     if y_sizes is None:
         y_sizes = np.ones(array.shape, dtype=np.float32)
-    if variable in ('area', 'perimeter', 'height', 'width'):
+    if variable in ('area', 'summed perimeter', 'height', 'width'):
         # Pad non-periodic edges with NaN so get_structure_* (which assumes
         # full toroidal periodicity) correctly treats them as domain boundaries.
         if wrap is None:
@@ -392,7 +411,7 @@ def array_size_distribution(
         elif variable == 'area':
             a = get_structure_areas(lab, nm, nl, x_sizes, y_sizes)
             to_bin = a[a > 0]
-        elif variable == 'perimeter':
+        elif variable == 'summed perimeter':
             p = get_structure_perimeters(lab, nm, nl, x_sizes, y_sizes)
             to_bin = p[p > 0]
         elif variable in ('height', 'width'):

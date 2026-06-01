@@ -55,7 +55,7 @@ ARRAY_1 = np.array([
 #                          (nontrunc, trunc)
 EXPECTED_1 = {
     'area':             (2, 0),
-    'perimeter':        (2, 0),
+    'summed perimeter':        (2, 0),
     'height':           (2, 0),
     'width':            (2, 0),
 }
@@ -86,7 +86,7 @@ ARRAY_2 = np.array([
 #                          (nontrunc, trunc)
 EXPECTED_2 = {
     'area':             (1, 1),  # upper cloud touches NaN strip, lower is interior
-    'perimeter':        (1, 1),
+    'summed perimeter':        (1, 1),
     'height':           (1, 1),
     'width':            (1, 1),
 }
@@ -119,7 +119,7 @@ ARRAY_3 = np.array([
 #                          (nontrunc, trunc)
 EXPECTED_3 = {
     'area':             (2, 1),  # NaN-adjacent cloud is NOT truncated; edge cloud is
-    'perimeter':        (2, 1),
+    'summed perimeter':        (2, 1),
     'height':           (2, 1),
     'width':            (2, 1),
 }
@@ -150,7 +150,7 @@ ARRAY_4 = np.array([
 #                          (nontrunc, trunc)
 EXPECTED_4 = {
     'area':             (2, 1),  # notch-adjacent cloud trunc; other two interior
-    'perimeter':        (2, 1),
+    'summed perimeter':        (2, 1),
     'height':           (2, 1),
     'width':            (2, 1),
 }
@@ -182,7 +182,7 @@ ARRAY_5 = np.array([
 #                          (nontrunc, trunc)
 EXPECTED_5 = {
     'area':             (1, 2),  # interior cloud nontrunc; diagonal-adjacent + left-edge trunc
-    'perimeter':        (1, 2),
+    'summed perimeter':        (1, 2),
     'height':           (1, 2),
     'width':            (1, 2),
 }
@@ -214,7 +214,7 @@ ARRAY_6 = np.array([
 #                          (nontrunc, trunc)
 EXPECTED_6 = {
     'area':             (2, 1),  # Cloud A trunc (touches channel); B + C nontrunc
-    'perimeter':        (2, 1),
+    'summed perimeter':        (2, 1),
     'height':           (2, 1),
     'width':            (2, 1),
 }
@@ -246,7 +246,7 @@ ARRAY_7 = np.array([
 #                          (nontrunc, trunc)
 EXPECTED_7 = {
     'area':             (3, 0),  # isolated interior NaN does NOT make clouds truncated
-    'perimeter':        (3, 0),
+    'summed perimeter':        (3, 0),
     'height':           (3, 0),
     'width':            (3, 0),
 }
@@ -267,7 +267,7 @@ CASES = {
     'ARRAY_7': (ARRAY_7, EXPECTED_7),
 }
 
-VARIABLES = ['area', 'perimeter', 'height', 'width']
+VARIABLES = ['area', 'summed perimeter', 'height', 'width']
 
 
 def run_test(case_name, variable):

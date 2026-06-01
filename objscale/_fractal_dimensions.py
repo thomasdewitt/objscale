@@ -5,6 +5,7 @@ from numpy.typing import NDArray
 import numba
 from numba.typed import List
 from scipy.ndimage import label
+import warnings
 from warnings import warn
 from ._object_analysis import (
     label_structures,
@@ -13,16 +14,19 @@ from ._object_analysis import (
     remove_structure_holes,
     get_structure_areas,
     get_structure_perimeters,
+    get_structure_height_width,
 )
 from ._utils import linear_regression, encase_in_value
 
 __all__ = [
     'ensemble_correlation_dimension',
     'ensemble_box_dimension',
+    'ensemble_information_dimension',
+    'ensemble_box_renyi_dimension',
+    'ensemble_sandbox_renyi_dimension',
     'individual_fractal_dimension',
     'get_coords_of_boundaries',
     'get_locations_from_pixel_sizes',
-    'correlation_integral',
     'coarsen_array',
     'total_perimeter',
     'total_number',
@@ -32,13 +36,39 @@ __all__ = [
 ]
 
 
+@numba.njit(parallel=True, fastmath=True)
+def _box_sum_2d(arr: NDArray, factor: int) -> NDArray:
+    """Sum a 2D array into ``(h//factor, w//factor)`` boxes of size ``factor``.
+
+    Parallel over output rows; each thread reads a contiguous strip of input
+    rows so the inner loop runs against private L2 (no strided cache aliasing
+    on Zen 5, no thread contention). Caller is responsible for trimming the
+    input so ``arr.shape[0]`` and ``arr.shape[1]`` are exact multiples of
+    ``factor``.
+    """
+    h, w = arr.shape
+    out_h = h // factor
+    out_w = w // factor
+    out = np.zeros((out_h, out_w), dtype=np.int64)
+    for i in numba.prange(out_h):
+        i0 = i * factor
+        for j in range(out_w):
+            j0 = j * factor
+            s = 0
+            for di in range(factor):
+                for dj in range(factor):
+                    s += arr[i0 + di, j0 + dj]
+            out[i, j] = s
+    return out
+
+
 def ensemble_correlation_dimension(
     arrays: NDArray | list[NDArray],
     x_sizes: NDArray | None = None,
     y_sizes: NDArray | None = None,
     minlength: str | float = 'auto',
     maxlength: str | float = 'auto',
-    interior_circles_only: bool = True,
+    interior_circles_only: bool = False,
     return_C_l: bool = False,
     bins: NDArray | int | None = None,
     point_reduction_factor: float = 1,
@@ -47,10 +77,16 @@ def ensemble_correlation_dimension(
     """
     Calculate the correlation dimension D where C_l ∝ l^D for binary arrays.
 
-    Requires that each array has the same pixel sizes, although across the array
-    they may be nonuniform (e.g. increasing from left to right).
+    The resulting dimension is for the set of object edge points.
 
-    Note that the resulting dimension is for the set of *object edge* points.
+    This function is a thin wrapper around
+    :func:`ensemble_sandbox_renyi_dimension` at ``q=2``: the
+    Grassberger-Procaccia correlation integral is exactly the ``q=2`` case
+    of the sandbox partition function (``M_i^{q-1} = M_i`` and
+    ``sum_i M_i`` is the pair count). The function is preserved under its
+    historical name because Grassberger-Procaccia is the standard
+    designation for the ``q=2`` correlation dimension. For arbitrary
+    ``q``, call :func:`ensemble_sandbox_renyi_dimension` directly.
 
     Parameters
     ----------
@@ -63,15 +99,14 @@ def ensemble_correlation_dimension(
         Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
         This single grid is used for every array in ``arrays``.
     minlength : str or float, default='auto'
-        Minimum length scale for correlation calculation. If 'auto', uses 3 times
+        Minimum length scale for correlation calculation. If 'auto', uses 8 times
         the minimum pixel size.
     maxlength : str or float, default='auto'
         Maximum length scale for correlation calculation. If 'auto', uses 0.33 times
         the minimum array dimension.
-    interior_circles_only : bool, default=True
+    interior_circles_only : bool, default=False
         If True, only use circle centers that are at least maxlength distance from
-        all array edges to avoid boundary effects. In other words, only use circles
-        that are fully contained within the array. Recommended!
+        all array edges to avoid boundary effects.
     return_C_l : bool, default=False
         If True, return dimension, error, bins, C_l. Otherwise, return dimension, error.
     bins : None, int, or array-like, optional
@@ -92,156 +127,55 @@ def ensemble_correlation_dimension(
     dimension : float
         The correlation dimension.
     error : float
-        Error estimate for the dimension.
+        Error estimate for the dimension (95% CI half-width).
     bins : np.ndarray, optional
         The bins used for calculation. Only returned if return_C_l=True.
     C_l : np.ndarray, optional
-        The correlation integral values. Only returned if return_C_l=True.
+        The correlation integral values (= sandbox ``Z_{q=2}`` =
+        ``sum_i M_i``). Only returned if return_C_l=True.
 
     Raises
     ------
     ValueError
         If arrays contain NaN values, if pixel sizes are invalid, or if scale
         range is insufficient.
+
+    See Also
+    --------
+    ensemble_sandbox_renyi_dimension : The general sandbox-method Rényi
+        family for arbitrary ``q``. This function is the ``q=2`` case.
+    ensemble_box_renyi_dimension : The box-counting Rényi family.
     """
-    if isinstance(arrays, np.ndarray):
-        arrays = [arrays]
-
-    if x_sizes is None:
-        x_sizes = np.ones(arrays[0].shape, dtype=np.float32)
-    if y_sizes is None:
-        y_sizes = np.ones(arrays[0].shape, dtype=np.float32)
-    locations_x, locations_y = get_locations_from_pixel_sizes(x_sizes, y_sizes)
-
-    h = x_sizes.shape[0]
-    w = x_sizes.shape[1]
-
-    if maxlength == 'auto':
-        # ~One third of min(width, height) of entire array, where width, height are calculated in the center
-        maxlength = 0.33 * min((locations_x[int(h / 2), w - 1] - locations_x[int(h / 2), 0]), (locations_y[h - 1, int(w / 2)] - locations_y[0, int(w / 2)]))
-
-    if minlength == 'auto':
-        minlength = 3 * min(np.nanmin(x_sizes), np.nanmin(y_sizes))
-
-    # Basic validation checks
-    if np.any(np.isnan(arrays)):
-        raise ValueError('arrays must not contain NaN values')
-
-    if np.any(np.isnan(x_sizes)) or np.any(np.isnan(y_sizes)):
-        raise ValueError('x_sizes and y_sizes cannot contain NaN values')
-
-    if np.any(x_sizes <= 0) or np.any(y_sizes <= 0):
-        raise ValueError('x_sizes and y_sizes must be positive')
-
-    if bins is None:
-        bins = np.geomspace(minlength, maxlength, nbins)
-    elif isinstance(bins, int):
-        bins = np.geomspace(minlength, maxlength, bins)
-
-    # range of scale checks
-    if bins[-1] <= bins[0]:
-        raise ValueError(f'bin maximum length ({bins[-1]:.3f}) must be greater than bin minimum length ({bins[0]:.3f}); or if bins are passed, they must be increasing. Did you pass invalid values for minlength/maxlength?')
-
-    if bins[-1] / bins[0] < 10:
-        raise ValueError(f'Available scale ratio ({maxlength / minlength:.2f}) is less than 10. Need at least one order of magnitude separation for reliable dimension estimation.')
-
-    if interior_circles_only:
-        # Check that maxlength leaves a usable interior region (at least 5x5 pixels)
-        domain_width = locations_x[int(h / 2), w - 1] - locations_x[int(h / 2), 0]
-        domain_height = locations_y[h - 1, int(w / 2)] - locations_y[0, int(w / 2)]
-        interior_width = domain_width - 2 * maxlength
-        interior_height = domain_height - 2 * maxlength
-        min_pixel_x = np.min(x_sizes)
-        min_pixel_y = np.min(y_sizes)
-        interior_pixels_x = interior_width / min_pixel_x if min_pixel_x > 0 else 0
-        interior_pixels_y = interior_height / min_pixel_y if min_pixel_y > 0 else 0
-        if interior_pixels_x < 5 or interior_pixels_y < 5:
-            raise ValueError(
-                f'interior_circles_only=True requires that maxlength leaves a usable '
-                f'interior region, but maxlength={maxlength:.1f} with a domain of '
-                f'{domain_width:.1f} x {domain_height:.1f} leaves only '
-                f'{max(interior_pixels_x, 0):.0f} x {max(interior_pixels_y, 0):.0f} '
-                f'pixels of interior (need at least 5x5). Reduce maxlength or set '
-                f'interior_circles_only=False.'
-            )
-
-    C_l = np.zeros(bins.shape)
-
-    for array in arrays:
-        if np.any(array.shape != x_sizes.shape):
-            raise ValueError(f'All arrays must be same shape as pixel sizes (currently {array.shape} and {x_sizes.shape}, respectively)')
-
-        array = array.astype(np.float16)
-
-        all_boundary_coordinates = get_coords_of_boundaries(array)
-
-        if interior_circles_only:
-            # Calculate distance from each boundary coordinate to all array edges
-            coord_locations_x = locations_x[all_boundary_coordinates[:, 0], all_boundary_coordinates[:, 1]]
-            coord_locations_y = locations_y[all_boundary_coordinates[:, 0], all_boundary_coordinates[:, 1]]
-
-            # Distance to each edge for all coordinates
-            dist_to_left = coord_locations_x - locations_x[int(h / 2), 0]
-            dist_to_right = locations_x[int(h / 2), w - 1] - coord_locations_x
-            dist_to_top = coord_locations_y - locations_y[0, int(w / 2)]
-            dist_to_bottom = locations_y[h - 1, int(w / 2)] - coord_locations_y
-
-            # Find coordinates that are at least maxlength from ALL edges
-            min_dist_to_any_edge = np.minimum.reduce([dist_to_left, dist_to_right, dist_to_top, dist_to_bottom])
-            interior_mask = min_dist_to_any_edge >= maxlength
-
-            circle_centers = all_boundary_coordinates[interior_mask]
-
-        else:
-            circle_centers = all_boundary_coordinates
-
-        if len(circle_centers) == 0:
-            continue
-
-        if point_reduction_factor > 1:
-            circle_centers = circle_centers[np.random.choice(np.arange(len(circle_centers)), int(len(circle_centers) / point_reduction_factor), replace=False)]
-        elif point_reduction_factor < 1:
-            raise ValueError('point_reduction_factor must be >= 1')
-
-        if len(circle_centers) == 0:
-            continue
-
-        # Convert index coordinates to physical coordinates for bounding box
-        boundary_phys_x = locations_x[all_boundary_coordinates[:, 0], all_boundary_coordinates[:, 1]]
-        boundary_phys_y = locations_y[all_boundary_coordinates[:, 0], all_boundary_coordinates[:, 1]]
-        boundary_phys = np.column_stack([boundary_phys_x, boundary_phys_y])
-
-        center_phys_x = locations_x[circle_centers[:, 0], circle_centers[:, 1]]
-        center_phys_y = locations_y[circle_centers[:, 0], circle_centers[:, 1]]
-        center_phys = np.column_stack([center_phys_x, center_phys_y])
-
-        # Sort boundary points by physical y for binary-search bounding box
-        sort_order = np.argsort(boundary_phys[:, 1])
-        sorted_boundary_phys = boundary_phys[sort_order]
-
-        max_bin = bins[-1]
-        bins_sq = bins ** 2
-
-        C_l += correlation_integral(center_phys, sorted_boundary_phys,
-                                    bins_sq, max_bin)
-
-    # Perform linear regression to estimate dimension
-    x, y = np.log10(bins), np.log10(C_l)
-    index = np.isfinite(x) & np.isfinite(y)
-    if len(x[index]) < 3:
-        warn('Not enough data to estimate correlation dimension, returning nan')
-        if return_C_l:
-            return np.nan, np.nan, np.array([np.nan]), np.array([np.nan])
-        else:
-            return np.nan, np.nan
-    coefficients, cov = np.polyfit(x[index], y[index], 1, cov=True)
-    fit_error = np.sqrt(np.diag(cov))
-    dimension, error = coefficients[0], 2 * fit_error[0]  # fit error is for 95% conf. int.
-
+    result = ensemble_sandbox_renyi_dimension(
+        binary_arrays=arrays,
+        q=2.0,
+        set='edge',
+        x_sizes=x_sizes,
+        y_sizes=y_sizes,
+        minlength=minlength,
+        maxlength=maxlength,
+        interior_circles_only=interior_circles_only,
+        nbins=nbins,
+        bins=bins,
+        point_reduction_factor=point_reduction_factor,
+        return_values=return_C_l,
+    )
+    # Preserve the pre-refactor failure-mode contract: when the fit
+    # returns nan, the historical `ensemble_correlation_dimension` emitted
+    # a warning and returned ``(nan, nan, [nan], [nan])`` from
+    # ``return_C_l=True``. The sandbox wrapper instead returns
+    # ``(nan, nan, full_bins, full_Z)``; rewrap here so that
+    # downstream code keyed to the old contract keeps working.
     if return_C_l:
-        return dimension, error, bins, C_l
-    else:
-        return dimension, error
+        dimension, error, bins_used, Z = result
+        if not np.isfinite(dimension):
+            warn('Not enough data to estimate correlation dimension, returning nan')
+            return np.nan, np.nan, np.array([np.nan]), np.array([np.nan])
+        return dimension, error, bins_used, Z
+    dimension, error = result
+    if not np.isfinite(dimension):
+        warn('Not enough data to estimate correlation dimension, returning nan')
+    return dimension, error
 
 
 def individual_correlation_dimension(
@@ -275,7 +209,7 @@ def individual_correlation_dimension(
     y_sizes : np.ndarray, optional
         Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
     minlength : str or float, default='auto'
-        Minimum length scale for correlation calculation. If 'auto', uses 3 times
+        Minimum length scale for correlation calculation. If 'auto', uses 8 times
         the minimum pixel size.
     maxlength : str or float, default='auto'
         Maximum length scale for correlation calculation. If 'auto', uses
@@ -318,7 +252,7 @@ def individual_correlation_dimension(
 
     # Pad with NaN border if not already present
     if not np.any(np.isnan(array)):
-        array = np.pad(array.astype(float), pad_width=1, mode='constant',
+        array = np.pad(array.astype(np.float32), pad_width=1, mode='constant',
                        constant_values=np.nan)
         if x_sizes is not None:
             x_sizes = np.pad(x_sizes, pad_width=1, mode='edge')
@@ -341,7 +275,7 @@ def individual_correlation_dimension(
     cols = np.any(isolated, axis=0)
     rmin, rmax = np.where(rows)[0][[0, -1]]
     cmin, cmax = np.where(cols)[0][[0, -1]]
-    cropped = isolated[rmin:rmax + 1, cmin:cmax + 1].astype(np.float64)
+    cropped = isolated[rmin:rmax + 1, cmin:cmax + 1].astype(np.float32)
 
     # Pad with 1px of zeros to prevent toroidal wrap artifacts
     padded = np.pad(cropped, pad_width=1, mode='constant', constant_values=0)
@@ -384,19 +318,362 @@ def individual_correlation_dimension(
     )
 
 
+def _one_sided_edge_mask(binary: NDArray) -> NDArray:
+    """One-sided 4-connected edge mask: 1-pixels with at least one 0-neighbor.
+
+    Pixels on the array boundary count as having a "0 neighbor" outside the
+    domain, matching the convention of `set='ones'` for boundary handling.
+    Returns an int8 mask.
+    """
+    b = binary.astype(np.int8, copy=False)
+    h, w = b.shape
+    # neighbor[i,j] = OR of (b[i,j] == 1 AND any 4-neighbor == 0)
+    has_zero_nbr = np.zeros((h, w), dtype=bool)
+    # Up neighbor (treat domain edge as 0)
+    has_zero_nbr[1:, :] |= (b[:-1, :] == 0)
+    has_zero_nbr[0, :] = True
+    # Down
+    has_zero_nbr[:-1, :] |= (b[1:, :] == 0)
+    has_zero_nbr[-1, :] = True
+    # Left
+    has_zero_nbr[:, 1:] |= (b[:, :-1] == 0)
+    has_zero_nbr[:, 0] = True
+    # Right
+    has_zero_nbr[:, :-1] |= (b[:, 1:] == 0)
+    has_zero_nbr[:, -1] = True
+    return ((b == 1) & has_zero_nbr).astype(np.int8)
+
+
+def _box_renyi_from_set(
+    set_arrays: list[NDArray],
+    q_arr: NDArray,
+    box_sizes: NDArray,
+    box_origin_shift: tuple[float, float],
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Core box-Rényi routine: count 1-pixels per box, fit slopes.
+
+    Parameters
+    ----------
+    set_arrays : list of int8 arrays
+        Binary arrays where 1 = pixel in the set being measured. The caller
+        is responsible for whatever preprocessing turns the user's input into
+        a "set" (e.g. one-sided edge mask for ``set='edge'``).
+    q_arr : np.ndarray
+        1-D array of Rényi orders.
+    box_sizes : np.ndarray
+        Integer box sizes (in pixels), already filtered to be valid for the
+        input shapes.
+    box_origin_shift : tuple of float
+        ``(sx, sy)`` fractional shifts of the box grid origin, in units of
+        the current box size.
+
+    Returns
+    -------
+    D_q : np.ndarray, shape (len(q_arr),)
+        Estimated Rényi dimension for each ``q``.
+    err : np.ndarray, shape (len(q_arr),)
+        95% CI half-width for each estimate.
+    partition : np.ndarray, shape (len(q_arr), len(box_sizes))
+        ``Z_q^(p)(eps)`` for q != 1, ``-S_1(eps)`` for q == 1, in the same
+        order as ``q_arr``. Useful for plotting and diagnostics.
+    """
+    nq = q_arr.shape[0]
+    nb = box_sizes.shape[0]
+    partition = np.full((nq, nb), np.nan, dtype=np.float64)
+
+    sx, sy = box_origin_shift
+
+    for k, factor in enumerate(box_sizes):
+        factor = int(factor)
+        # Pool box counts and total interior pixels across the ensemble.
+        # The caller (ensemble_box_renyi_dimension) is responsible for ensuring
+        # that every array fits at every factor; if h_full or w_full ever
+        # came out 0 here, the ensemble would silently shrink at that factor
+        # and bias the slope. Treat that as an internal error.
+        pooled_n: list[NDArray] = []
+        V_total = 0  # total interior pixel area summed across arrays
+        for arr_idx, arr in enumerate(set_arrays):
+            sy_pix = int(round(sy * factor))
+            sx_pix = int(round(sx * factor))
+            shifted = arr[sy_pix:, sx_pix:]
+            h_full = (shifted.shape[0] // factor) * factor
+            w_full = (shifted.shape[1] // factor) * factor
+            if h_full == 0 or w_full == 0:
+                raise AssertionError(
+                    f'Internal error: array {arr_idx} of shape {arr.shape} cannot '
+                    f'fit a single box of size {factor} after shift {(sx_pix, sy_pix)}. '
+                    f'The wrapper should have filtered this box size out.'
+                )
+            trimmed = shifted[:h_full, :w_full]
+            if not trimmed.flags['C_CONTIGUOUS']:
+                trimmed = np.ascontiguousarray(trimmed)
+            box_counts = _box_sum_2d(trimmed, factor)
+            pooled_n.append(box_counts.ravel())
+            V_total += h_full * w_full
+
+        if not pooled_n or V_total == 0:
+            continue
+
+        n = np.concatenate(pooled_n)
+        n_sum = float(n.sum())
+        if n_sum <= 0:
+            continue
+
+        for qi in range(nq):
+            q = float(q_arr[qi])
+            if abs(q - 1.0) < 1e-10:
+                # Entropy form: requires probability normalization (sum = 1).
+                # Use log10 so the slope vs log10(eps) is directly -D_1.
+                p = n[n > 0] / n_sum
+                S1 = -float(np.sum(p * np.log10(p)))
+                partition[qi, k] = S1
+            else:
+                # Geometric / interior-pixel-area normalization.
+                # Z_q = sum_i (n_i / V) ** q
+                if q <= 0:
+                    n_pos = n[n > 0]
+                    Zq = float(np.sum((n_pos / V_total) ** q))
+                else:
+                    Zq = float(np.sum((n / V_total) ** q))
+                partition[qi, k] = Zq
+
+    # Fit slopes
+    log_eps = np.log10(box_sizes.astype(np.float64))
+    D_q = np.full(nq, np.nan, dtype=np.float64)
+    err = np.full(nq, np.nan, dtype=np.float64)
+    for qi in range(nq):
+        q = float(q_arr[qi])
+        y = partition[qi].copy()
+        if abs(q - 1.0) < 1e-10:
+            # S_1 itself is linear in log_eps with slope -D_1.
+            yfit = y
+        else:
+            # Z_q is non-negative; log it.
+            yfit = np.where(y > 0, np.log10(y), np.nan)
+        (slope, _), (slope_err, _) = linear_regression(log_eps, yfit)
+        if not np.isfinite(slope):
+            continue
+        if abs(q - 1.0) < 1e-10:
+            D_q[qi] = -slope
+            err[qi] = slope_err
+        else:
+            D_q[qi] = slope / (q - 1.0)
+            err[qi] = slope_err / abs(q - 1.0)
+
+    return D_q, err, partition
+
+
+def ensemble_box_renyi_dimension(
+    binary_arrays: NDArray | list[NDArray],
+    q: float | NDArray = 0.0,
+    set: str = 'edge',
+    box_sizes: str | NDArray = 'default',
+    max_box_size: int | None = None,
+    min_box_size: int = 8,
+    box_origin_shift: tuple[float, float] = (0.0, 0.0),
+    return_values: bool = False,
+):
+    """Calculate the generalized Rényi dimension D_q via box counting.
+
+    The Rényi dimensions form a one-parameter family of fractal dimensions
+    indexed by an order ``q``, generalizing the box-counting dimension
+    (``q=0``), information dimension (``q=1``), and correlation dimension
+    (``q=2``). For a scale-invariant set, the partition function
+
+    .. math::
+        Z_q(\\varepsilon) = \\sum_i p_i^q \\propto \\varepsilon^{(q-1) D_q}
+
+    where ``p_i`` is the (probability or density) measure of the set in box
+    ``i`` of size ``\\varepsilon``. The slope of ``log Z_q`` vs
+    ``log \\varepsilon`` is ``(q-1) D_q``. At ``q=1`` the formula has a
+    removable singularity that resolves to the Shannon entropy form
+    ``S_1 = -sum p_i log p_i``, which scales as ``-D_1 log \\varepsilon``.
+
+    For monofractal sets (e.g. level sets of fractional Brownian motion),
+    ``D_q`` is constant in ``q``. For multifractal sets, ``D_q`` is a
+    monotonically decreasing function of ``q`` whose values quantify the
+    distribution's heterogeneity at different moment orders.
+
+    Parameters
+    ----------
+    binary_arrays : np.ndarray or list of np.ndarray
+        2D binary arrays. May contain 0/1 integers, booleans, or floats.
+    q : float or np.ndarray, default=0.0
+        Rényi order(s). May be a scalar or a 1-D array of values. ``q=0``
+        gives the box-counting dimension; ``q=1`` gives the information
+        dimension; ``q=2`` gives the correlation dimension.
+    set : {'edge', 'ones'}, default='edge'
+        Which set is being measured.
+
+        * ``'edge'``: the boundary of the binary array, computed as a
+          one-sided 4-connected edge mask (1-pixels that have at least one
+          0-neighbor; pixels on the array border count as having a "0
+          neighbor" outside the domain).
+        * ``'ones'``: the set of 1-pixels themselves, no preprocessing.
+    box_sizes : 'default' or array-like, default='default'
+        Integer box sizes in pixels. If 'default', powers of 2 from
+        ``min_box_size`` up to ``max_box_size``.
+    max_box_size : int or None, default=None
+        Largest box size in pixels. If None, uses the smaller array
+        dimension (i.e. the largest box that fits at all).
+    min_box_size : int, default=8
+        Smallest box size in pixels. The default of 8 keeps the fit
+        away from pixel-discretization noise at the smallest scales.
+    box_origin_shift : tuple of (float, float), default=(0.0, 0.0)
+        Fractional shift ``(sx, sy)`` of the box-grid origin, in units of
+        the current box size. At each box size ``factor``, the actual
+        integer pixel shift is ``int(round(sx * factor))`` along x and
+        ``int(round(sy * factor))`` along y. Used to probe sensitivity to
+        the box-grid alignment.
+    return_values : bool, default=False
+        If True, also return the partition function values used in the fit.
+
+    Returns
+    -------
+    D_q : float or np.ndarray
+        Estimated Rényi dimension. Scalar if ``q`` was scalar, array
+        otherwise.
+    err : float or np.ndarray
+        95% CI half-width for the estimate(s).
+    box_sizes : np.ndarray, optional
+        The box sizes used. Returned only if ``return_values=True``.
+    partition : np.ndarray, optional
+        The partition function values: ``Z_q^(p)(eps)`` for ``q != 1`` (with
+        geometric normalization ``p_i = n_i / V``, where ``V`` is the total
+        interior pixel area at this ``eps``), and the Shannon entropy
+        ``S_1(eps)`` for ``q == 1``. Shape ``(len(q), len(box_sizes))`` if
+        ``q`` is array, ``(len(box_sizes),)`` if scalar. Returned only if
+        ``return_values=True``.
+
+    Notes
+    -----
+    **Interior boxes only.** Boxes that would extend past the domain edge
+    are not counted. The function trims each input array to a multiple of
+    the current box size (after applying any ``box_origin_shift``) and
+    discards the remainder. This matches the philosophy of
+    ``ensemble_correlation_dimension(interior_circles_only=True)``.
+
+    **Normalization.** For ``q != 1``, ``p_i = n_i / V(\\varepsilon)`` where
+    ``V`` is the total interior pixel area at this box size — a purely
+    geometric normalization that removes coverage-fluctuation bias from the
+    fitted slope. For ``q == 1``, the Shannon entropy requires probability
+    normalization ``p_i = n_i / sum_j n_j``; the two coincide for
+    uniform-density fields.
+
+    **Boundary convention for** ``set='edge'``. The edge mask is one-sided:
+    a pixel is in the edge set iff it is 1 and has at least one 0-neighbor.
+    This differs slightly from the convention used by older versions of
+    ``ensemble_box_dimension``, which counted a coarsened cell as "edge"
+    iff it contained both 0s and 1s.
+
+    See Also
+    --------
+    ensemble_box_dimension : Equivalent to ``q=0``.
+    ensemble_information_dimension : Equivalent to ``q=1``.
+    ensemble_correlation_dimension : Theoretically equivalent to ``q=2`` for
+        the same set, computed via the Grassberger-Procaccia pairwise method.
+    """
+    # Normalize inputs
+    if isinstance(binary_arrays, np.ndarray):
+        binary_arrays = [binary_arrays]
+    if len(binary_arrays) == 0:
+        raise ValueError('binary_arrays must be non-empty')
+
+    if np.any([np.any(np.isnan(arr)) for arr in binary_arrays]):
+        raise ValueError('arrays must not contain NaN values')
+
+    if set not in ('edge', 'ones'):
+        raise ValueError(f'set={set!r} not supported (supported values are "edge" or "ones")')
+
+    q_scalar = np.isscalar(q)
+    q_arr = np.atleast_1d(np.asarray(q, dtype=np.float64))
+
+    # Resolve box_sizes. The maximum box size is bounded by the *smallest*
+    # array in the ensemble (after subtracting any box_origin_shift overhead),
+    # so that every array contributes a fully-tiled interior region at every
+    # box size. Otherwise, smaller arrays would silently drop out at large
+    # box sizes and bias the slope.
+    if isinstance(box_sizes, str):
+        if box_sizes != 'default':
+            raise ValueError(f'box_sizes={box_sizes} not supported')
+        box_sizes_arr = 2 ** np.arange(1, 15)
+    else:
+        box_sizes_arr = np.asarray(box_sizes)
+
+    smallest_dim = min(min(arr.shape) for arr in binary_arrays)
+    # box_origin_shift can push the start past the first row/col by up to
+    # factor-1 pixels, so the effective "available" extent is one factor
+    # short in the worst case. Require shape >= factor + (factor - 1) =
+    # 2*factor - 1, i.e. factor <= (shape + 1) // 2 in the worst case.
+    # For shift=(0, 0) (the common case), the bound is just factor <= shape.
+    sx, sy = box_origin_shift
+    max_shift_frac = max(abs(sx), abs(sy))
+    if max_shift_frac >= 1.0:
+        raise ValueError(
+            f'box_origin_shift fractions must lie in [0, 1), got {box_origin_shift}'
+        )
+    # Worst-case shift in pixels at factor F is round(max_shift_frac * F).
+    # Require F + round(max_shift_frac * F) <= smallest_dim.
+    # Rearranging: F <= smallest_dim / (1 + max_shift_frac).
+    auto_max = int(smallest_dim / (1.0 + max_shift_frac))
+    if max_box_size is None:
+        max_box_size_eff = auto_max
+    else:
+        max_box_size_eff = min(int(max_box_size), auto_max)
+
+    box_sizes_arr = box_sizes_arr[box_sizes_arr <= max_box_size_eff]
+    box_sizes_arr = box_sizes_arr[box_sizes_arr >= min_box_size]
+    box_sizes_arr = np.unique(box_sizes_arr.astype(np.int64))
+    if box_sizes_arr.size < 3:
+        raise ValueError(
+            f'Need at least 3 valid box sizes for a slope fit, got {box_sizes_arr.size}. '
+            f'Smallest array dimension is {smallest_dim}, max usable box size is '
+            f'{max_box_size_eff}. Reduce min_box_size, raise max_box_size, increase '
+            f'array size, or pass an explicit box_sizes array.'
+        )
+
+    # Build the set arrays
+    set_arrays: list[NDArray] = []
+    for arr in binary_arrays:
+        if arr.ndim != 2:
+            raise ValueError('binary_arrays must be 2-dimensional')
+        if set == 'ones':
+            set_arrays.append((np.asarray(arr) > 0).astype(np.int8))
+        else:  # 'edge'
+            set_arrays.append(_one_sided_edge_mask(np.asarray(arr) > 0))
+
+    D_q, err, partition = _box_renyi_from_set(
+        set_arrays, q_arr, box_sizes_arr, box_origin_shift
+    )
+
+    if q_scalar:
+        D_q_out = float(D_q[0])
+        err_out = float(err[0])
+        partition_out = partition[0]
+    else:
+        D_q_out = D_q
+        err_out = err
+        partition_out = partition
+
+    if return_values:
+        return D_q_out, err_out, box_sizes_arr, partition_out
+    return D_q_out, err_out
+
+
 def ensemble_box_dimension(
     binary_arrays: NDArray | list[NDArray],
     set: str = 'edge',
-    min_pixels: int = 1,
-    min_box_size: int = 2,
+    max_box_size: int | None = None,
+    min_box_size: int = 8,
     box_sizes: str | NDArray = 'default',
     return_values: bool = False
 ) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
     """
     Calculate the ensemble box-counting dimension of binary arrays.
 
-    Estimates the box-counting dimension (also known as Minkowski-Bouligand dimension)
-    for a list of binary arrays. It averages the results across multiple arrays.
+    Equivalent to ``ensemble_box_renyi_dimension(..., q=0)``. Kept as a
+    convenience wrapper because box counting is the most familiar special
+    case.
 
     Parameters
     ----------
@@ -404,16 +681,17 @@ def ensemble_box_dimension(
         A list of 2D binary arrays or a single 2D binary array.
     set : str, default='edge'
         Specifies which set to consider for box counting:
-        - 'edge': Box dimension of the set of boundaries between 0 and 1.
-        - 'ones': Box dimension of the set of values equal to 1.
-    min_pixels : int, default=1
-        Largest box size, in units of the number of boxes required to cover the
-        array in the smaller direction.
-    min_box_size : int, default=2
-        Smallest box size.
+        - 'edge': Box dimension of the set of boundaries (1-pixels with at
+          least one 0-neighbor).
+        - 'ones': Box dimension of the set of 1-pixels.
+    max_box_size : int or None, default=None
+        Largest box size in pixels. If None, uses the smaller array dimension.
+    min_box_size : int, default=8
+        Smallest box size in pixels. The default of 8 keeps the fit
+        away from pixel-discretization noise at the smallest scales.
     box_sizes : array-like or 'default', default='default'
-        Box sizes used. If 'default', uses powers of 2 up to 2^14 that satisfy
-        the above criteria.
+        Box sizes used. If 'default', uses powers of 2 from ``min_box_size``
+        up to ``max_box_size``.
     return_values : bool, default=False
         If True, return additional data used in the calculation.
 
@@ -425,65 +703,440 @@ def ensemble_box_dimension(
         The error of the estimate.
     box_sizes : np.ndarray, optional
         Box sizes used. Only returned if return_values=True.
-    mean_number_boxes : np.ndarray, optional
-        Mean box counts. Only returned if return_values=True.
+    number_boxes : np.ndarray, optional
+        Number of nonempty boxes (pooled across the input ensemble) at each
+        box size. Only returned if return_values=True.
 
     Raises
     ------
     ValueError
-        If an unsupported value is provided for 'set' or if arrays contain NaN values.
-
-    Notes
-    -----
-    The function uses linear regression on log-log plot of box counts vs. scale
-    to estimate the box-counting dimension. The slope of this regression gives
-    the negative of the box-counting dimension.
+        If an unsupported value is provided for 'set' or if arrays contain NaN
+        values.
     """
+    return ensemble_box_renyi_dimension(
+        binary_arrays,
+        q=0.0,
+        set=set,
+        box_sizes=box_sizes,
+        max_box_size=max_box_size,
+        min_box_size=min_box_size,
+        return_values=return_values,
+    )
+
+
+def ensemble_information_dimension(
+    binary_arrays: NDArray | list[NDArray],
+    method: str = 'sandbox',
+    set: str = 'edge',
+    return_values: bool = False,
+    **kwargs,
+) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
+    """
+    Calculate the ensemble information dimension D_1 of binary arrays.
+
+    The information dimension is the ``q=1`` member of the Rényi-dimension
+    family. It has a removable singularity at ``q=1`` that resolves to the
+    Shannon entropy form
+
+    .. math::
+        S_1(\\varepsilon) = -\\sum_i p_i \\log p_i \\sim -D_1 \\log \\varepsilon
+        \\qquad (\\text{box estimator})
+
+    or, equivalently, the set-centered log average
+
+    .. math::
+        \\langle \\log M(r) \\rangle \\sim D_1 \\log r
+        \\qquad (\\text{sandbox estimator}).
+
+    Both estimators converge to the same ``D_1``.
+
+    Two methods are supported:
+
+    * ``method='sandbox'`` (default): forwards to
+      :func:`ensemble_sandbox_renyi_dimension` at ``q=1``. Set-centered
+      balls at continuous radii. Lower grid-quantization noise; recommended
+      for most use cases.
+    * ``method='box'``: forwards to :func:`ensemble_box_renyi_dimension`
+      at ``q=1``. Fixed-grid box counting with the Shannon entropy form.
+
+    Parameters
+    ----------
+    binary_arrays : list of np.ndarray or np.ndarray
+        A list of 2D binary arrays or a single 2D binary array.
+    method : {'sandbox', 'box'}, default='sandbox'
+        Which estimator to use. ``'sandbox'`` is the default because it
+        avoids the grid-alignment noise that box counting suffers from at
+        ``q=1``.
+    set : {'edge', 'ones'}, default='edge'
+        Which set to measure. See :func:`ensemble_sandbox_renyi_dimension`
+        or :func:`ensemble_box_renyi_dimension`.
+    return_values : bool, default=False
+        If True, also return the bins and partition values used in the fit.
+    **kwargs
+        Method-specific options forwarded to the underlying estimator.
+
+        For ``method='sandbox'``: ``x_sizes``, ``y_sizes``, ``minlength``,
+        ``maxlength``, ``interior_circles_only``, ``nbins``, ``bins``,
+        ``point_reduction_factor``.
+
+        For ``method='box'``: ``max_box_size``, ``min_box_size``,
+        ``box_sizes``, ``box_origin_shift``.
+
+    Returns
+    -------
+    dimension : float
+        The estimated information dimension.
+    error : float
+        The 95% CI half-width.
+    bins : np.ndarray, optional
+        Distance bins (sandbox) or box sizes (box). Only returned if
+        ``return_values=True``.
+    partition : np.ndarray, optional
+        Partition function values: ``\\langle log10 M(r)\\rangle``
+        (sandbox) or Shannon entropy ``S_1(eps)`` (box). Only returned if
+        ``return_values=True``.
+
+    See Also
+    --------
+    ensemble_sandbox_renyi_dimension : Sandbox-method Rényi family.
+    ensemble_box_renyi_dimension : Box-counting Rényi family.
+    ensemble_box_dimension : The ``q=0`` box-counting wrapper.
+    ensemble_correlation_dimension : The ``q=2`` sandbox-method wrapper.
+    """
+    if method == 'sandbox':
+        return ensemble_sandbox_renyi_dimension(
+            binary_arrays,
+            q=1.0,
+            set=set,
+            return_values=return_values,
+            **kwargs,
+        )
+    elif method == 'box':
+        return ensemble_box_renyi_dimension(
+            binary_arrays,
+            q=1.0,
+            set=set,
+            return_values=return_values,
+            **kwargs,
+        )
+    else:
+        raise ValueError(
+            f"method={method!r} not supported (use 'sandbox' or 'box')"
+        )
+
+
+def ensemble_sandbox_renyi_dimension(
+    binary_arrays: NDArray | list[NDArray],
+    q: float | NDArray = 2.0,
+    set: str = 'edge',
+    x_sizes: NDArray | None = None,
+    y_sizes: NDArray | None = None,
+    minlength: str | float = 'auto',
+    maxlength: str | float = 'auto',
+    interior_circles_only: bool = False,
+    nbins: int = 50,
+    bins: NDArray | int | None = None,
+    point_reduction_factor: float = 1,
+    return_values: bool = False,
+):
+    """Sandbox-method estimate of the Rényi dimension D_q of binary arrays.
+
+    For each set point i (the "sandbox center"), count the number M_i(r) of
+    other set points within distance r, then aggregate
+
+    .. math::
+        Z_q(r) = \\sum_i M_i(r)^{q-1}    \\quad (q \\ne 1)
+
+        Z_1(r) = \\sum_i \\log_{10} M_i(r)  \\quad (q = 1, set-point average)
+
+    For a multifractal set, ``\\langle M(r)^{q-1}\\rangle \\sim r^{(q-1) D_q}``,
+    so the slope of ``log Z_q`` vs ``log r`` is ``(q-1) D_q`` for ``q != 1``,
+    recovered as ``D_q = slope / (q - 1)``. At ``q = 1`` the formula has a
+    removable singularity that resolves to ``\\langle \\log M(r)\\rangle \\sim
+    D_1 \\log r``, fit directly.
+
+    The sandbox method is a strict generalization of the
+    Grassberger-Procaccia correlation integral to arbitrary ``q``: at
+    ``q = 2``, ``M_i^{q-1} = M_i`` and ``sum_i M_i = `` the pair count, so
+    ``D_2`` is the Grassberger-Procaccia correlation dimension. The function
+    :func:`ensemble_correlation_dimension` is now a thin wrapper around this
+    one at ``q=2``.
+
+    Compared to the box-counting Rényi family
+    (:func:`ensemble_box_renyi_dimension`), sandbox samples the partition
+    function at continuous radii instead of fixed-grid tiles, and uses a
+    set-centered measure that bounds ``M_i >= 1`` and so behaves better at
+    ``q < 1`` where box counting suffers from grid-quantization noise.
+
+    References
+    ----------
+    Tél, Fülöp, Vicsek 1989, *Physica A* 159, 155–166.
+    Vicsek 1992, *Fractal Growth Phenomena*, Ch. 3.
+
+    Parameters
+    ----------
+    binary_arrays : np.ndarray or list of np.ndarray
+        2D binary arrays. May contain 0/1 integers, booleans, or floats.
+    q : float or np.ndarray, default=2.0
+        Rényi order(s). Scalar or 1-D array. ``q == 1`` (within ``1e-10``)
+        is special-cased to the log form.
+    set : {'edge', 'ones'}, default='edge'
+        Which set is being measured. Same convention as
+        :func:`ensemble_box_renyi_dimension`.
+
+        * ``'edge'`` — one-sided 4-connected edge mask of the binary array
+          (1-pixels with at least one 0-neighbor; pixels on the array border
+          count as having a "0 neighbor" outside the domain).
+        * ``'ones'`` — the set of 1-pixels itself.
+    x_sizes, y_sizes : np.ndarray, optional
+        Per-pixel physical sizes. If None, uniform unit pixels.
+    minlength, maxlength : str or float, default='auto'
+        Distance scale range. ``'auto'`` = ``8 * min pixel size`` and
+        ``0.33 * min array dimension`` respectively. The default
+        ``minlength`` of 8× pixel size keeps the fit away from
+        pixel-discretization noise at the smallest scales.
+    interior_circles_only : bool, default=False
+        If True, only sandbox centers at least ``maxlength`` from every
+        domain edge contribute, avoiding boundary truncation bias.
+    nbins : int, default=50
+        Number of log-spaced distance bins (used when ``bins`` is None).
+    bins : np.ndarray or int, optional
+        Explicit bin array (ascending physical distances) or an int
+        (number of log-spaced bins).
+    point_reduction_factor : float, default=1
+        Subsample sandbox centers by this factor (must be ``>= 1``).
+    return_values : bool, default=False
+        If True, return ``(D_q, err, bins, Z)`` instead of ``(D_q, err)``.
+        For scalar ``q``, ``Z`` has shape ``(B,)``. For vector ``q``, ``Z``
+        has shape ``(len(q), B)``. At the ``q=1`` index, ``Z`` holds the
+        per-center mean ``\\langle log10 M_i\\rangle`` (already normalized).
+
+    Returns
+    -------
+    D_q : float or np.ndarray
+        Rényi dimension estimate(s). Scalar if ``q`` is scalar.
+    err : float or np.ndarray
+        95% CI half-width.
+    bins : np.ndarray, optional
+        Distance bins used. Returned only if ``return_values=True``.
+    Z : np.ndarray, optional
+        Sandbox partition function values.
+
+    See Also
+    --------
+    ensemble_box_renyi_dimension : Box-based Rényi dimension family.
+    ensemble_correlation_dimension : Thin wrapper around this function at
+        ``q=2``, kept under its historical Grassberger-Procaccia name.
+    ensemble_information_dimension : ``q=1`` wrapper, supports both
+        ``method='sandbox'`` (default) and ``method='box'``.
+    """
+    # ----- normalize inputs -----
     if isinstance(binary_arrays, np.ndarray):
         binary_arrays = [binary_arrays]
+    if len(binary_arrays) == 0:
+        raise ValueError('binary_arrays must be non-empty')
 
-    if np.any(np.isnan(binary_arrays)):
+    if set not in ('edge', 'ones'):
+        raise ValueError(f"set={set!r} not supported (use 'edge' or 'ones')")
+
+    if point_reduction_factor < 1:
+        raise ValueError('point_reduction_factor must be >= 1')
+
+    q_scalar = np.isscalar(q)
+    q_arr = np.atleast_1d(np.asarray(q, dtype=np.float64))
+    Q = q_arr.shape[0]
+
+    # Mask of q entries within tolerance of 1.0 (entropy-form special case).
+    # Stored as a per-element bool so duplicate q==1 entries are all handled.
+    is_q1 = np.abs(q_arr - 1.0) < 1e-10
+
+    # Use the first array's shape to set up the physical grid (caller is
+    # responsible for passing arrays of compatible shape; preserved from GP).
+    if x_sizes is None:
+        x_sizes = np.ones(binary_arrays[0].shape, dtype=np.float32)
+    if y_sizes is None:
+        y_sizes = np.ones(binary_arrays[0].shape, dtype=np.float32)
+    locations_x, locations_y = get_locations_from_pixel_sizes(x_sizes, y_sizes)
+
+    h = x_sizes.shape[0]
+    w = x_sizes.shape[1]
+
+    # ----- resolve scale range -----
+    if maxlength == 'auto':
+        maxlength = 0.33 * min(
+            (locations_x[int(h / 2), w - 1] - locations_x[int(h / 2), 0]),
+            (locations_y[h - 1, int(w / 2)] - locations_y[0, int(w / 2)]),
+        )
+    if minlength == 'auto':
+        minlength = 8 * min(np.nanmin(x_sizes), np.nanmin(y_sizes))
+
+    # ----- validate -----
+    if np.any([np.any(np.isnan(arr)) for arr in binary_arrays]):
         raise ValueError('arrays must not contain NaN values')
+    if np.any(np.isnan(x_sizes)) or np.any(np.isnan(y_sizes)):
+        raise ValueError('x_sizes and y_sizes cannot contain NaN values')
+    if np.any(x_sizes <= 0) or np.any(y_sizes <= 0):
+        raise ValueError('x_sizes and y_sizes must be positive')
 
-    if isinstance(box_sizes, str):
-        if box_sizes != 'default':
-            raise ValueError(f'box_sizes={box_sizes} not supported')
-        box_sizes = 2 ** np.arange(1, 15)  # assumed any array is smaller than 32768 pixels
-    else:
-        box_sizes = np.array(box_sizes)
+    if bins is None:
+        bins = np.geomspace(minlength, maxlength, nbins)
+    elif isinstance(bins, int):
+        bins = np.geomspace(minlength, maxlength, bins)
+    bins = np.asarray(bins, dtype=np.float64)
 
-    max_coarsening_factor = min(binary_arrays[0].shape) / min_pixels
-    box_sizes = box_sizes[box_sizes <= max_coarsening_factor]
-    box_sizes = box_sizes[box_sizes >= min_box_size]
+    if bins[-1] <= bins[0]:
+        raise ValueError(
+            f'bin maximum length ({bins[-1]:.3f}) must be greater than bin '
+            f'minimum length ({bins[0]:.3f}); or if bins are passed, they '
+            f'must be increasing. Did you pass invalid values for '
+            f'minlength/maxlength?'
+        )
+    if bins[-1] / bins[0] < 10:
+        raise ValueError(
+            f'Available scale ratio ({maxlength / minlength:.2f}) is less '
+            f'than 10. Need at least one order of magnitude separation for '
+            f'reliable dimension estimation.'
+        )
 
-    mean_number_boxes = np.empty((0, box_sizes.size), dtype=np.float32)
+    if interior_circles_only:
+        domain_width = locations_x[int(h / 2), w - 1] - locations_x[int(h / 2), 0]
+        domain_height = locations_y[h - 1, int(w / 2)] - locations_y[0, int(w / 2)]
+        interior_width = domain_width - 2 * maxlength
+        interior_height = domain_height - 2 * maxlength
+        min_pixel_x = np.min(x_sizes)
+        min_pixel_y = np.min(y_sizes)
+        interior_pixels_x = interior_width / min_pixel_x if min_pixel_x > 0 else 0
+        interior_pixels_y = interior_height / min_pixel_y if min_pixel_y > 0 else 0
+        if interior_pixels_x < 5 or interior_pixels_y < 5:
+            raise ValueError(
+                f'interior_circles_only=True requires that maxlength leaves a usable '
+                f'interior region, but maxlength={maxlength:.1f} with a domain of '
+                f'{domain_width:.1f} x {domain_height:.1f} leaves only '
+                f'{max(interior_pixels_x, 0):.0f} x {max(interior_pixels_y, 0):.0f} '
+                f'pixels of interior (need at least 5x5). Reduce maxlength or set '
+                f'interior_circles_only=False.'
+            )
+
+    bins_sq = bins ** 2
+    max_bin = float(bins[-1])
+
+    # ----- per-array kernel call, accumulate Z_total -----
+    Z_total = np.zeros((Q, bins.shape[0]), dtype=np.float64)
+    n_centers_total = 0
 
     for array in binary_arrays:
-        number_boxes = []
-        for factor in box_sizes:
-            # Coarsen
-            coarsened_array = encase_in_value(coarsen_array(array, factor), np.nan)
+        if np.any(array.shape != x_sizes.shape):
+            raise ValueError(
+                f'All arrays must be same shape as pixel sizes (currently '
+                f'{array.shape} and {x_sizes.shape}, respectively)'
+            )
 
-            # Count boxes
-            if set == 'edge':
-                nboxes = np.count_nonzero((coarsened_array > 0) & (coarsened_array < 1))
-            elif set == 'ones':
-                nboxes = np.count_nonzero(coarsened_array > 0)
-            else:
-                raise ValueError(f'set={set} not supported (supported values are "edge" or "ones")')
+        # Build the set mask, then extract pixel coordinates of set points.
+        if set == 'edge':
+            set_mask = _one_sided_edge_mask(np.asarray(array) > 0)
+        else:  # set == 'ones'
+            set_mask = (np.asarray(array) > 0).astype(np.int8)
 
-            number_boxes.append(nboxes)
+        all_set_coords = np.argwhere(set_mask > 0)
 
-        mean_number_boxes = np.append(mean_number_boxes, [number_boxes], axis=0)
+        if all_set_coords.shape[0] == 0:
+            continue
 
-    mean_number_boxes = np.mean(mean_number_boxes, axis=0)
-    mean_number_boxes[mean_number_boxes == 0] = np.nan  # eliminate warning when logging 0
+        # Interior filter: keep set points at least maxlength from every edge
+        if interior_circles_only:
+            coord_locations_x = locations_x[all_set_coords[:, 0], all_set_coords[:, 1]]
+            coord_locations_y = locations_y[all_set_coords[:, 0], all_set_coords[:, 1]]
+            dist_to_left = coord_locations_x - locations_x[int(h / 2), 0]
+            dist_to_right = locations_x[int(h / 2), w - 1] - coord_locations_x
+            dist_to_top = coord_locations_y - locations_y[0, int(w / 2)]
+            dist_to_bottom = locations_y[h - 1, int(w / 2)] - coord_locations_y
+            min_dist_to_any_edge = np.minimum.reduce(
+                [dist_to_left, dist_to_right, dist_to_top, dist_to_bottom]
+            )
+            interior_mask = min_dist_to_any_edge >= maxlength
+            sandbox_centers_idx = all_set_coords[interior_mask]
+        else:
+            sandbox_centers_idx = all_set_coords
 
-    (slope, _), (error, _) = linear_regression(np.log10(box_sizes), np.log10(mean_number_boxes))
+        if sandbox_centers_idx.shape[0] == 0:
+            continue
+
+        # Subsample sandbox centers
+        if point_reduction_factor > 1:
+            n_keep = int(len(sandbox_centers_idx) / point_reduction_factor)
+            if n_keep == 0:
+                continue
+            chosen = np.random.choice(
+                np.arange(len(sandbox_centers_idx)), n_keep, replace=False
+            )
+            sandbox_centers_idx = sandbox_centers_idx[chosen]
+
+        # Convert to physical coordinates
+        boundary_phys_x = locations_x[all_set_coords[:, 0], all_set_coords[:, 1]]
+        boundary_phys_y = locations_y[all_set_coords[:, 0], all_set_coords[:, 1]]
+        boundary_phys = np.column_stack([boundary_phys_x, boundary_phys_y])
+        del boundary_phys_x, boundary_phys_y
+
+        center_phys_x = locations_x[sandbox_centers_idx[:, 0], sandbox_centers_idx[:, 1]]
+        center_phys_y = locations_y[sandbox_centers_idx[:, 0], sandbox_centers_idx[:, 1]]
+        center_phys = np.column_stack([center_phys_x, center_phys_y])
+        n_centers_here = center_phys.shape[0]
+        del set_mask, all_set_coords, sandbox_centers_idx
+        del center_phys_x, center_phys_y
+
+        # Sort boundary points by physical y for the kernel's bbox trick
+        sort_order = np.argsort(boundary_phys[:, 1])
+        sorted_boundary_phys = boundary_phys[sort_order]
+        del sort_order, boundary_phys
+
+        Z_total += _sandbox_partition(
+            center_phys, sorted_boundary_phys, bins_sq, max_bin, q_arr, is_q1
+        )
+        n_centers_total += n_centers_here
+
+    # At q=1 the kernel accumulates sum_i log10 M_i, which scales as
+    # n_centers_total * D_1 * log10(r). Convert to per-center mean so the
+    # slope vs log10(r) is D_1 directly. Apply to every q==1 entry.
+    if n_centers_total > 0 and is_q1.any():
+        Z_total[is_q1, :] /= float(n_centers_total)
+
+    # ----- linear regression per q -----
+    log_r = np.log10(bins)
+    D_q = np.full(Q, np.nan, dtype=np.float64)
+    err_arr = np.full(Q, np.nan, dtype=np.float64)
+    for qi in range(Q):
+        y = Z_total[qi].copy()
+        q_val = float(q_arr[qi])
+        if is_q1[qi]:
+            # Z[qi] is already <log10 M_i> linear in log10 r.
+            y_fit = y
+        else:
+            y_fit = np.full_like(y, np.nan)
+            pos = y > 0
+            y_fit[pos] = np.log10(y[pos])
+        (slope, _), (slope_err, _) = linear_regression(log_r, y_fit)
+        if not np.isfinite(slope):
+            continue
+        if is_q1[qi]:
+            D_q[qi] = slope
+            err_arr[qi] = slope_err
+        else:
+            D_q[qi] = slope / (q_val - 1.0)
+            err_arr[qi] = slope_err / abs(q_val - 1.0)
+
+    # Unbox return shape
+    if q_scalar:
+        D_out = float(D_q[0])
+        err_out = float(err_arr[0])
+        Z_out = Z_total[0]
+    else:
+        D_out = D_q
+        err_out = err_arr
+        Z_out = Z_total
 
     if return_values:
-        return -slope, error, box_sizes, mean_number_boxes
-    return -slope, error
+        return D_out, err_out, bins, Z_out
+    return D_out, err_out
 
 
 def ensemble_coarsening_dimension(
@@ -538,89 +1191,44 @@ def ensemble_coarsening_dimension(
     mean_total_perimeters : np.ndarray, optional
         Mean total perimeters. Only returned if return_values=True.
     """
-    if isinstance(arrays, np.ndarray):
-        arrays = [arrays]
-    if x_sizes is None:
-        x_sizes = np.ones(arrays[0].shape, dtype=np.float32)
-    if y_sizes is None:
-        y_sizes = np.ones(arrays[0].shape, dtype=np.float32)
+    raise NotImplementedError(
+        "ensemble_coarsening_dimension has been removed due to ambiguity in "
+        "coarsening binary arrays. Use ensemble_correlation_dimension (q=2), "
+        "ensemble_sandbox_renyi_dimension (general q), or "
+        "ensemble_box_dimension (q=0) instead."
+    )
 
-    if isinstance(coarsening_factors, str):  # to not try elementwise comparison
-        if coarsening_factors != 'default':
-            raise ValueError(f'coarsening_factors={coarsening_factors} not supported')
-        if np.count_nonzero((arrays[0] < 1) & (arrays[0] > 0)) == 0:
-            # If a binary array, even coarsening factors can be ambiguous because sometimes the superpixel is half cloudy
-            coarsening_factors = 3 ** np.arange(0, 10)
-        else:
-            # Otherwise, use more coarsening factors:
-            coarsening_factors = 2 ** np.arange(0, 15)
-    else:
-        coarsening_factors = np.array(coarsening_factors)
 
-    max_coarsening_factor = min(arrays[0].shape) / min_pixels
-    coarsening_factors = coarsening_factors[coarsening_factors <= max_coarsening_factor]
+_UNSET = object()
 
-    mean_total_perimeters = np.empty((0, coarsening_factors.size), dtype=np.float32)
-
-    for i in range(len(arrays)):
-        array = arrays[i]
-        if isinstance(x_sizes, list):
-            xs = x_sizes[i]
-        else:
-            xs = x_sizes
-        if isinstance(y_sizes, list):
-            ys = y_sizes[i]
-        else:
-            ys = y_sizes
-
-        total_perimeters = []
-        for factor in coarsening_factors:
-            # Coarsen
-            coarsened_array = encase_in_value(coarsen_array(array, factor), np.nan)
-            coarsened_x_sizes = factor * encase_in_value(coarsen_array(xs, factor), 0)
-            coarsened_y_sizes = factor * encase_in_value(coarsen_array(ys, factor), 0)
-
-            nanmask = (np.isnan(coarsened_array) | np.isnan(coarsened_x_sizes) | np.isnan(coarsened_y_sizes))
-            # Make binary
-            coarsened_array_binary = (coarsened_array > cloudy_threshold).astype(np.float32)
-
-            # To not count exterior perimeter, set to nan, to count it, set to 0
-            if count_exterior:
-                padding = 0
-            else:
-                padding = np.nan
-            coarsened_array_binary[nanmask] = padding
-
-            total_p = total_perimeter(coarsened_array_binary, coarsened_x_sizes, coarsened_y_sizes)
-            total_perimeters.append(total_p)
-        mean_total_perimeters = np.append(mean_total_perimeters, [total_perimeters], axis=0)
-
-    mean_total_perimeters = np.mean(mean_total_perimeters, axis=0)
-    mean_total_perimeters[mean_total_perimeters == 0] = np.nan  # eliminate warning when logging 0
-
-    (slope, _), (error, _) = linear_regression(np.log10(coarsening_factors), np.log10(mean_total_perimeters))
-    if return_values:
-        return 1 - slope, error, coarsening_factors, mean_total_perimeters
-
-    return 1 - slope, error
+_INDIVIDUAL_METHODS = {
+    'filled perimeter vs filled area',
+    'summed perimeter vs unfilled area',
+    'filled perimeter vs width',
+    'filled perimeter vs height',
+    'summed perimeter vs width',
+    'summed perimeter vs height',
+}
 
 
 def individual_fractal_dimension(
     arrays: NDArray | list[NDArray],
     x_sizes: NDArray | list[NDArray] | None = None,
     y_sizes: NDArray | list[NDArray] | None = None,
-    min_a: float = 10,
-    max_a: float = np.inf,
+    min_length_scale: float = _UNSET,
+    max_length_scale: float = _UNSET,
     bins: int | None = 30,
     return_values: bool = False,
-    filled: bool = True,
+    method: str = _UNSET,
+    filled: bool = _UNSET,
+    min_a: float = _UNSET,
+    max_a: float = _UNSET,
 ) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
     """
     Calculate the individual fractal dimension Df of objects within arrays.
 
-    The method uses linear regression on log a vs. log p, omitting structures
-    touching the array edge. By default, interior holes are filled before
-    computing areas and perimeters (see ``filled``).
+    The method uses linear regression on log(length scale) vs. log(perimeter),
+    omitting structures touching the array edge.
 
     Parameters
     ----------
@@ -634,20 +1242,43 @@ def individual_fractal_dimension(
         Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
         If np.ndarray, use these for each array in 'arrays'. If list, assume
         y_sizes[i] corresponds to arrays[i].
-    min_a : float, default=10
-        Minimum structure area to include in calculation.
-    max_a : float, default=np.inf
-        Maximum structure area to include in calculation.
+    min_length_scale : float, default=3
+        Minimum length scale to include. Filters on the x-axis quantity:
+        sqrt(area) for area methods, width or height for those methods.
+    max_length_scale : float, default=np.inf
+        Maximum length scale to include.
     bins : int or None, default=30
-        Number of bins along log10(sqrt(area)) for averaging. The regression
-        is performed on the bin-averaged values. If None, fit on all individual
-        points without binning.
+        Number of bins along the log10 length scale for averaging. The
+        regression is performed on the bin-averaged values. If None, fit on
+        all individual points without binning.
     return_values : bool, default=False
         If True, return additional data used in the calculation.
-    filled : bool, default=True
-        If True, fill interior holes in structures before computing areas and
-        perimeters. If False, holes are left as-is, so perimeters include
-        interior boundaries and areas exclude hole pixels.
+    method : str, default='filled perimeter vs filled area'
+        Which perimeter and length-scale combination to use. Options:
+
+        - ``'filled perimeter vs filled area'``: fill holes, regress
+          log(perimeter) vs log(sqrt(area)). Default.
+        - ``'summed perimeter vs unfilled area'``: no hole filling, perimeter
+          includes inner boundaries, area excludes holes.
+        - ``'filled perimeter vs width'``: fill holes, regress log(perimeter)
+          vs log(bounding-box width).
+        - ``'filled perimeter vs height'``: fill holes, regress log(perimeter)
+          vs log(bounding-box height).
+        - ``'summed perimeter vs width'``: no hole filling, regress
+          log(perimeter) vs log(bounding-box width).
+        - ``'summed perimeter vs height'``: no hole filling, regress
+          log(perimeter) vs log(bounding-box height).
+    filled : bool, optional
+        .. deprecated::
+            Use ``method`` instead. ``filled=True`` maps to
+            ``'filled perimeter vs filled area'``; ``filled=False`` maps to
+            ``'summed perimeter vs unfilled area'``.
+    min_a : float, optional
+        .. deprecated::
+            Use ``min_length_scale`` instead. Converted via ``sqrt(min_a)``.
+    max_a : float, optional
+        .. deprecated::
+            Use ``max_length_scale`` instead. Converted via ``sqrt(max_a)``.
 
     Returns
     -------
@@ -655,8 +1286,8 @@ def individual_fractal_dimension(
         The individual fractal dimension.
     uncertainty : float
         Uncertainty estimate (95% confidence).
-    log10_sqrt_a : np.ndarray, optional
-        Log10 of sqrt(area) values (bin centers if bins is not None).
+    log10_length_scale : np.ndarray, optional
+        Log10 of the length-scale values (bin centers if bins is not None).
         Only returned if return_values=True.
     log10_p : np.ndarray, optional
         Log10 of perimeter values (bin means if bins is not None).
@@ -665,9 +1296,62 @@ def individual_fractal_dimension(
     Raises
     ------
     ValueError
-        If array shapes don't match pixel size shapes.
+        If array shapes don't match pixel size shapes, if an invalid method
+        is given, or if deprecated and new parameters are mixed.
     """
-    areas, perimeters = [], []
+    # --- resolve deprecated 'filled' parameter ---
+    if filled is not _UNSET and method is not _UNSET:
+        raise ValueError("Cannot pass both 'filled' and 'method'.")
+    if filled is not _UNSET:
+        warnings.warn(
+            "The 'filled' parameter is deprecated. Use method='filled perimeter"
+            " vs filled area' or method='summed perimeter vs unfilled area'.",
+            DeprecationWarning, stacklevel=2,
+        )
+        method = ('filled perimeter vs filled area' if filled
+                  else 'summed perimeter vs unfilled area')
+    elif method is _UNSET:
+        method = 'filled perimeter vs filled area'
+
+    if method not in _INDIVIDUAL_METHODS:
+        raise ValueError(
+            f"method={method!r} not recognized. Supported methods: "
+            + ', '.join(sorted(_INDIVIDUAL_METHODS))
+        )
+
+    # --- resolve deprecated min_a / max_a ---
+    if min_a is not _UNSET and min_length_scale is not _UNSET:
+        raise ValueError("Cannot pass both 'min_a' and 'min_length_scale'.")
+    if max_a is not _UNSET and max_length_scale is not _UNSET:
+        raise ValueError("Cannot pass both 'max_a' and 'max_length_scale'.")
+    if min_a is not _UNSET:
+        warnings.warn(
+            "The 'min_a' parameter is deprecated. Use 'min_length_scale' instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        min_length_scale = np.sqrt(min_a)
+    if max_a is not _UNSET:
+        warnings.warn(
+            "The 'max_a' parameter is deprecated. Use 'max_length_scale' instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        max_length_scale = np.sqrt(max_a)
+    if min_length_scale is _UNSET:
+        min_length_scale = 3
+    if max_length_scale is _UNSET:
+        max_length_scale = np.inf
+
+    # --- parse method ---
+    fill_holes = method.startswith('filled perimeter')
+    if 'vs filled area' in method or 'vs unfilled area' in method:
+        length_scale_type = 'sqrt_area'
+    elif 'vs width' in method:
+        length_scale_type = 'width'
+    else:
+        length_scale_type = 'height'
+
+    # --- collect per-structure data ---
+    length_scales, perimeters = [], []
     if not isinstance(arrays, list):
         arrays = [arrays]
 
@@ -691,41 +1375,49 @@ def individual_fractal_dimension(
             raise ValueError('Each array shape must match corresponding pixel sizes shape')
 
         array = remove_structures_touching_border_nan(array)
-        if filled:
+        if fill_holes:
             array = remove_structure_holes(array)
         lab, nm, nl = label_structures(array, wrap='both')
         if lab is None:
             continue
-        new_a = get_structure_areas(lab, nm, nl, xs, ys)
+
         new_p = get_structure_perimeters(lab, nm, nl, xs, ys)
-        # Filter out labels with zero area or zero perimeter (e.g. NaN-surrounded)
-        valid = (new_a > 0) & (new_p > 0)
-        areas.extend(new_a[valid])
+        if length_scale_type == 'sqrt_area':
+            new_a = get_structure_areas(lab, nm, nl, xs, ys)
+            new_ls = np.sqrt(new_a)
+            valid = (new_a > 0) & (new_p > 0)
+        else:
+            heights, widths = get_structure_height_width(lab, nm, nl, xs, ys)
+            new_ls = widths if length_scale_type == 'width' else heights
+            valid = (new_ls > 0) & (new_p > 0)
+
+        length_scales.extend(new_ls[valid])
         perimeters.extend(new_p[valid])
 
-    areas, perimeters = np.array(areas), np.array(perimeters)
-    mask = (areas > min_a) & (areas < max_a)
-    areas, perimeters = areas[mask], perimeters[mask]
+    length_scales = np.array(length_scales)
+    perimeters = np.array(perimeters)
+    mask = (length_scales > min_length_scale) & (length_scales < max_length_scale)
+    length_scales, perimeters = length_scales[mask], perimeters[mask]
 
-    log_sqrt_a = np.log10(np.sqrt(areas))
+    log_ls = np.log10(length_scales)
     log_p = np.log10(perimeters)
 
     if bins is not None:
-        bin_edges = np.linspace(log_sqrt_a.min(), log_sqrt_a.max(), bins + 1)
-        bin_indices = np.digitize(log_sqrt_a, bin_edges) - 1
+        bin_edges = np.linspace(log_ls.min(), log_ls.max(), bins + 1)
+        bin_indices = np.digitize(log_ls, bin_edges) - 1
         bin_indices = np.clip(bin_indices, 0, bins - 1)
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
         bin_means = np.array([log_p[bin_indices == i].mean()
                               if np.any(bin_indices == i) else np.nan
                               for i in range(bins)])
         valid = np.isfinite(bin_means)
-        log_sqrt_a = bin_centers[valid]
+        log_ls = bin_centers[valid]
         log_p = bin_means[valid]
 
-    (slope, _), (err, _) = linear_regression(log_sqrt_a, log_p)
+    (slope, _), (err, _) = linear_regression(log_ls, log_p)
 
     if return_values:
-        return slope, err, log_sqrt_a, log_p
+        return slope, err, log_ls, log_p
     else:
         return slope, err
 
@@ -769,6 +1461,7 @@ def get_coords_of_boundaries(array: NDArray) -> NDArray:
     shifted_down = np.roll(array, 1, axis=0)
     diff_right = shifted_right - array
     diff_down = shifted_down - array
+    del shifted_right, shifted_down
 
     right_side_of_pixel = np.argwhere(diff_right == 1)
     right_side_of_pixel[:, 1] -= 1
@@ -811,82 +1504,92 @@ def get_locations_from_pixel_sizes(
     return np.nancumsum(pixel_sizes_x, 1), np.nancumsum(pixel_sizes_y, 0)
 
 
-@numba.njit(parallel=True)
-def correlation_integral(centers_phys, sorted_boundary_phys, bins_sq, max_bin):
+@numba.njit(parallel=True, fastmath=True)
+def _sandbox_partition(
+    centers_phys,        # (N_c, 2) sandbox centers (physical x, y), drawn from set
+    sorted_boundary,     # (N_s, 2) set points (physical x, y), sorted by y
+    bins_sq,             # (B,) ascending squared distance bin edges
+    max_bin,             # float: sqrt(bins_sq[-1])
+    qs,                  # (Q,) Rényi orders
+    is_q1,               # (Q,) bool: True where qs[qi] is within tolerance of 1.0
+):
+    """For each center, compute M_i(r_k) = #set points within distance r_k.
+    Accumulate Z[qi, k] across centers:
+        Z[qi, k] = sum_i M_i(r_k)^(qs[qi] - 1)        (q != 1)
+        Z[qi, k] = sum_i log10(M_i(r_k))              (q == 1, set elementwise via is_q1)
+
+    Centers are assumed to be drawn from the same set as sorted_boundary,
+    so each center self-counts at distance 0 (M_i >= 1 always at any
+    positive radius). This matches the convention of the legacy
+    `correlation_integral` kernel and makes the q=2 output bit-identical
+    to the previous Grassberger-Procaccia implementation:
+
+        sum_i M_i(r_k) ^ (2 - 1) = sum_i M_i(r_k) = pair count = old C_l[k].
+
+    Binning convention: `searchsorted(bins_sq, dist_sq, side='right')` —
+    bin index is the smallest k with bins_sq[k] > dist_sq, i.e. the bin
+    "first reached" by this pair. After per-center cumulative sum,
+    M_i(bins[k]) = #neighbors with dist < bins[k]. Same as old kernel.
     """
-    Calculate correlation integral for boundary coordinates.
+    N_c = centers_phys.shape[0]
+    B = bins_sq.shape[0]
+    Q = qs.shape[0]
+    n_threads = numba.config.NUMBA_NUM_THREADS
 
-    For each center, count how many boundary points are within each distance
-    threshold. Uses physical coordinates directly for correct bounding on any
-    grid geometry (including non-uniform and 2D-varying pixel sizes).
+    # Per-thread accumulators (avoid races, no atomics needed)
+    Z_per_thread = np.zeros((n_threads, Q, B), dtype=np.float64)
+    # Per-thread scratch histograms, reused across centers
+    hist_per_thread = np.zeros((n_threads, B), dtype=np.int64)
 
-    Parameters
-    ----------
-    centers_phys : np.ndarray
-        Physical (x, y) coordinates of circle centers, shape (N, 2).
-    sorted_boundary_phys : np.ndarray
-        Physical (x, y) coordinates of boundary points, shape (M, 2),
-        sorted by y coordinate.
-    bins_sq : np.ndarray
-        1-D array of squared distance thresholds (bins**2), sorted ascending.
-    max_bin : float
-        Maximum bin distance (sqrt of bins_sq[-1]).
+    sorted_y = sorted_boundary[:, 1].copy()
 
-    Returns
-    -------
-    C_l : np.ndarray
-        Correlation integral values, same shape as bins_sq.
-
-    Notes
-    -----
-    Uses three optimizations over the naive approach:
-    1. Bounding box in physical space via sort + binary search on y coordinate.
-    2. Squared distances to avoid sqrt in the inner loop.
-    3. Binary-search binning with forward cumulative sum instead of linear scan.
-    """
-    sorted_y = sorted_boundary_phys[:, 1].copy()
-    num_bins = bins_sq.shape[0]
-
-    # Each thread gets its own histogram to eliminate race conditions
-    hist_per_thread = np.zeros((numba.config.NUMBA_NUM_THREADS, num_bins))
-
-    for i in numba.prange(centers_phys.shape[0]):
+    for i in numba.prange(N_c):
         thread_id = numba.get_thread_id()
         cx = centers_phys[i, 0]
         cy = centers_phys[i, 1]
 
-        # Binary search for physical y bounding box
+        # Zero this thread's scratch histogram
+        for k in range(B):
+            hist_per_thread[thread_id, k] = 0
+
+        # y bounding box via binary search
         lo = np.searchsorted(sorted_y, cy - max_bin, side='left')
         hi = np.searchsorted(sorted_y, cy + max_bin, side='right')
 
         for j in range(lo, hi):
-            bx = sorted_boundary_phys[j, 0]
-
-            # Physical x bounding box check
+            bx = sorted_boundary[j, 0]
             if abs(bx - cx) > max_bin:
                 continue
-
             dx = cx - bx
-            dy = cy - sorted_boundary_phys[j, 1]
+            dy = cy - sorted_boundary[j, 1]
             dist_sq = dx * dx + dy * dy
-
-            # Binary search: find first bin where bins_sq[bin_idx] > dist_sq
             bin_idx = np.searchsorted(bins_sq, dist_sq, side='right')
-            if bin_idx < num_bins:
+            if bin_idx < B:
                 hist_per_thread[thread_id, bin_idx] += 1
 
-    # Sum across threads
-    hist = np.sum(hist_per_thread, axis=0)
+        # Per-center cumulative sum gives M_i(bins[k]) at each k.
+        # Then accumulate M_i^(q-1) (or log10(M_i) at q==1) into Z[qi, k].
+        # is_q1 is checked per qi so duplicate q==1 entries all get the
+        # log form (vs. a single q1_index, which only handles the first).
+        M = 0
+        for k in range(B):
+            M += hist_per_thread[thread_id, k]
+            if M > 0:
+                M_f = float(M)
+                for qi in range(Q):
+                    if is_q1[qi]:
+                        Z_per_thread[thread_id, qi, k] += np.log10(M_f)
+                    else:
+                        exponent = qs[qi] - 1.0
+                        Z_per_thread[thread_id, qi, k] += M_f ** exponent
 
-    # Forward cumulative sum: convert histogram to cumulative counts
-    # hist[k] = count of pairs whose first qualifying bin index is k
-    # C_l[k] = count of pairs with dist_sq < bins_sq[k] = sum of hist[0..k]
-    C_l = np.zeros(num_bins)
-    cumsum = 0.0
-    for k in range(num_bins):
-        cumsum += hist[k]
-        C_l[k] = cumsum
-    return C_l
+    # Reduce across threads
+    Z = np.zeros((Q, B), dtype=np.float64)
+    for t in range(n_threads):
+        for qi in range(Q):
+            for k in range(B):
+                Z[qi, k] += Z_per_thread[t, qi, k]
+    return Z
 
 
 def coarsen_array(array: NDArray, factor: int) -> NDArray:
@@ -1007,9 +1710,8 @@ def total_number(
     int
         Number of connected objects.
     """
-    array_copy = array.copy()
-    array_copy[np.isnan(array_copy)] = 0
-    _, n_structures = label(array_copy.astype(bool), structure, output=np.float32)
+    clean = np.where(np.isnan(array), 0, array)
+    _, n_structures = label(clean.astype(bool), structure, output=np.float32)
     return n_structures
 
 
@@ -1074,14 +1776,16 @@ def label_size(
     Label structures with their size values.
 
     Creates a labelled array where each structure is labelled with its size
-    (area, perimeter, width, or height) instead of a unique identifier.
+    (area, summed perimeter, width, or height) instead of a unique identifier.
 
     Parameters
     ----------
     array : np.ndarray
         Binary array of structures: 2-d array, padded with 0's or np.nan's.
     variable : str, default='area'
-        Which variable to use for 'size'. Options: 'area', 'perimeter', 'width', 'height'.
+        Which variable to use for 'size'. Options: ``'area'``,
+        ``'summed perimeter'``, ``'width'``, ``'height'``.
+        ``'perimeter'`` is accepted but deprecated.
     wrap : str or None, default='both'
         Boundary wrapping options: None, 'sides', 'both'.
         If 'sides', connect structures that span the left/right edge.
@@ -1110,8 +1814,14 @@ def label_size(
     binary = np.where(np.isnan(array), 0, array).astype(bool)
     labelled_array, n_structures = label(binary, output=np.float32)
 
-    if variable not in ['area', 'perimeter', 'width', 'height']:
-        raise ValueError(f'variable={variable} not supported (supported values are "area", "perimeter", "width", "height")')
+    if variable == 'perimeter':
+        warnings.warn(
+            "variable='perimeter' is deprecated, use 'summed perimeter' instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        variable = 'summed perimeter'
+    if variable not in ['area', 'summed perimeter', 'width', 'height']:
+        raise ValueError(f'variable={variable} not supported (supported values are "area", "summed perimeter", "width", "height")')
 
     if x_sizes is None:
         x_sizes = np.ones_like(labelled_array)
@@ -1135,8 +1845,8 @@ def label_size(
         raise ValueError(f'wrap={wrap} not supported')
 
     # Flatten arrays to find their indices.
-    values = np.sort(labelled_array.flatten())
-    original_locations = np.argsort(labelled_array.flatten())
+    values = np.sort(labelled_array.ravel())
+    original_locations = np.argsort(labelled_array.ravel())
     indices_2d = np.array(np.unravel_index(original_locations, labelled_array.shape)).T
 
     labelled_array[np.isnan(array)] = np.nan  # Turn this back to nan so perimeter along it is not included
@@ -1215,7 +1925,7 @@ def _label_size_helper(labelled_array, separated_structure_indices, labelled_wit
             area += y_sizes[i, j] * x_sizes[i, j]
 
         for (i, j) in indices:
-            if variable == 'perimeter':
+            if variable == 'summed perimeter':
                 labelled_with_sizes[i, j] = perimeter
             elif variable == 'area':
                 labelled_with_sizes[i, j] = area
