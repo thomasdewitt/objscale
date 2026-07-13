@@ -20,6 +20,7 @@ Notable changes to objscale. Format follows [Keep a Changelog](https://keepachan
 
 - Citations updated: DeWitt et al. fractal-dimensions paper is now published — DeWitt, Garrett, & Rees (2026), *Toward less subjective metrics for quantifying the shape and organization of clouds*, ACP 26, 6951–6971, doi:10.5194/acp-26-6951-2026. Cite both this and DeWitt & Garrett (2024, doi:10.5194/acp-24-8457-2024) when using the package.
 - Skill source-of-truth moved from `agent-skills/objscale/SKILL.md` to `objscale/SKILL.md`.
+- Runtime dependencies trimmed to numpy, scipy, scikit-image, numba; `scaleinvariance` and `matplotlib` (test-only) moved to the `dev` extra.
 
 ## [1.4.0] - 2026-06-01
 
