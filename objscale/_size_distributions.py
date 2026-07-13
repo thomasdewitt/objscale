@@ -25,6 +25,12 @@ __all__ = [
 ]
 
 
+# Sentinel for "argument not supplied", mirroring the pattern used by
+# individual_fractal_dimension in _fractal_dimensions.py. Lets us distinguish
+# "user passed min_threshold" from "use the variable-aware default".
+_UNSET = object()
+
+
 def _normalize_variable(variable, stacklevel=3):
     """Map deprecated ``'perimeter'`` to ``'summed perimeter'`` with a warning."""
     if variable == 'perimeter':
@@ -36,6 +42,54 @@ def _normalize_variable(variable, stacklevel=3):
     return variable
 
 
+def _variable_bin_bounds(variable, xs, ys):
+    """Physical (lower, upper) auto-bin bounds for one pixel-size grid.
+
+    Bounds are variable-aware and NaN-aware so that, on grids with sub-unity
+    pixel sizes, valid objects measured in length units are not silently
+    discarded by a domain-AREA upper bound.
+
+    - 'area': [min pixel area, total domain area]
+    - 'width': [min x pixel, max row extent (nanmax over rows of nansum x)]
+    - 'height': [min y pixel, max column extent (nanmax over cols of nansum y)]
+    - 'summed perimeter' / 'nested perimeter':
+        [min pixel length, space-filling bound nansum(sqrt(x*y))]
+    """
+    xy = xs * ys
+    if variable == 'area':
+        lower = np.nanmin(xy)
+        upper = np.nansum(xy)
+    elif variable == 'width':
+        lower = np.nanmin(xs)
+        upper = np.nanmax(np.nansum(xs, axis=1))
+    elif variable == 'height':
+        lower = np.nanmin(ys)
+        upper = np.nanmax(np.nansum(ys, axis=0))
+    elif variable in ('summed perimeter', 'nested perimeter'):
+        lower = min(np.nanmin(xs), np.nanmin(ys))
+        upper = np.nansum(np.sqrt(xy))
+    else:
+        raise ValueError(f'variable {variable} not supported')
+    return float(lower), float(upper)
+
+
+def _auto_bin_range(variable, x_sizes, y_sizes, n_arrays):
+    """Variable-aware auto-bin (lower, upper) across possibly-many grids.
+
+    When ``x_sizes``/``y_sizes`` are lists of per-array grids, the lower bound
+    is the min of per-array lower bounds and the upper bound is the max of
+    per-array upper bounds, so no array's objects fall outside the range.
+    """
+    lowers, uppers = [], []
+    for i in range(n_arrays):
+        xs = x_sizes[i] if isinstance(x_sizes, list) else x_sizes
+        ys = y_sizes[i] if isinstance(y_sizes, list) else y_sizes
+        lo, hi = _variable_bin_bounds(variable, xs, ys)
+        lowers.append(lo)
+        uppers.append(hi)
+    return min(lowers), max(uppers)
+
+
 def finite_array_size_distribution(
     arrays: NDArray | list[NDArray],
     variable: str,
@@ -43,7 +97,7 @@ def finite_array_size_distribution(
     y_sizes: NDArray | list[NDArray] | None = None,
     bins: int | NDArray = 100,
     bin_logs: bool = True,
-    min_threshold: float = 10,
+    min_threshold: float = _UNSET,
     truncation_threshold: float = 0.5
 ) -> tuple[NDArray, NDArray, NDArray, int]:
     """
@@ -76,14 +130,25 @@ def finite_array_size_distribution(
         If int, auto calculate bin locations and make that number of bins.
         If 1-D array: use these as bin edges or log10(bin edges). They must be uniformly
         linearly or logarithmically spaced (depending on bin_logs).
-        If using per-array ``x_sizes``/``y_sizes`` lists with very different overall
-        scales, pass explicit ``bins`` to avoid auto-bin ranges being dominated by
-        the first array.
+        The auto-bin range is variable-aware and NaN-aware (using the physical
+        pixel-size grids), so length-unit variables are binned over a length
+        range rather than the domain area:
+
+        - 'area': [min pixel area, total domain area]
+        - 'width': [min x pixel, max row extent]
+        - 'height': [min y pixel, max column extent]
+        - 'summed perimeter'/'nested perimeter':
+          [min pixel length, nansum(sqrt(x_sizes*y_sizes))]
+
+        With per-array ``x_sizes``/``y_sizes`` lists, the range spans all arrays
+        (min of lower bounds, max of upper bounds).
     bin_logs : bool, default=True
         If True, bin log10(variable) into logarithmically-spaced bins. If False, bin
         variable into linearly spaced bins.
-    min_threshold : float, default=10
-        Smallest bin edge. If bin edges are passed, this arg is ignored.
+    min_threshold : float, optional
+        Smallest bin edge (the lower edge of the auto-bin range). If not
+        provided (or ``None``), defaults to the variable-aware minimum pixel
+        scale (see ``bins``). If bin edges are passed explicitly, this arg is ignored.
     truncation_threshold : float, default=0.5
         Float between 0 and 1. Bins with a larger fraction of truncated objects than
         this are omitted from the regression.
@@ -98,6 +163,14 @@ def finite_array_size_distribution(
         Counts of truncated objects in each bin.
     truncation_index : int
         Index where truncated objects begin to dominate.
+
+    .. versionchanged:: 2.0.0
+        When ``bins`` is an int, the auto-bin range is now variable-aware and
+        NaN-aware (see ``bins``): length-unit variables (width/height/summed
+        perimeter/nested perimeter) are binned over a length range instead of
+        the domain area, so valid objects on grids with sub-unity pixel sizes
+        are no longer silently discarded. ``min_threshold`` now defaults to the
+        variable-aware minimum pixel scale rather than a fixed value of 10.
 
     Notes
     -----
@@ -123,16 +196,22 @@ def finite_array_size_distribution(
         y_sizes = np.ones(arrays[0].shape, dtype=np.float32)
 
     if isinstance(bins, int):
-        if isinstance(x_sizes, list):
-            max_value = np.nansum(x_sizes[0] * y_sizes[0])
-        else:
-            max_value = np.nansum(x_sizes * y_sizes)
+        # Variable-aware, NaN-aware auto-bin range using the physical grids.
+        # Spans all arrays when x_sizes/y_sizes are per-array lists.
+        auto_lower, auto_upper = _auto_bin_range(variable, x_sizes, y_sizes, len(arrays))
+        # A space-filling object attains the upper bound exactly (e.g. a full-row
+        # object has width == max row extent). Give the top edge a hair of
+        # headroom so the float32 measurement, upcast to float64, still lands
+        # inside the last (right-inclusive) bin. Immaterial on a log axis.
+        auto_upper = auto_upper * (1 + 1e-6)
+        lower_edge = (auto_lower if (min_threshold is _UNSET or min_threshold is None)
+                      else min_threshold)
         if bin_logs:
-            bin_edges = np.linspace(np.log10(min_threshold), np.log10(max_value), bins + 1)
+            bin_edges = np.linspace(np.log10(lower_edge), np.log10(auto_upper), bins + 1)
         else:
-            bin_edges = np.linspace(min_threshold, max_value, bins + 1)
+            bin_edges = np.linspace(lower_edge, auto_upper, bins + 1)
     else:
-        bin_edges = bins
+        bin_edges = np.asarray(bins)
 
     truncated_counts = np.zeros(bin_edges.size - 1)
     nontruncated_counts = np.zeros(bin_edges.size - 1)
@@ -187,7 +266,9 @@ def finite_array_size_distribution(
     # Find index where number of edge clouds is greater than threshold times total number of clouds
     truncation_index = np.argwhere(truncated_counts > truncation_threshold * (truncated_counts + nontruncated_counts))
     if truncation_index.size == 0:  # then there is no need to truncate
-        truncation_index = len(bin_edges)
+        # One past the end of the COUNT arrays (which have len(bin_edges)-1
+        # entries), so slicing [truncation_index:] is a no-op.
+        truncation_index = len(bin_edges) - 1
     else:
         truncation_index = truncation_index[0, 0]
 
@@ -202,7 +283,7 @@ def finite_array_powerlaw_exponent(
     x_sizes: NDArray | list[NDArray] | None = None,
     y_sizes: NDArray | list[NDArray] | None = None,
     bins: int | NDArray = 100,
-    min_threshold: float = 10,
+    min_threshold: float = _UNSET,
     truncation_threshold: float = 0.5,
     min_count_threshold: int = 30,
     return_counts: bool = False
@@ -239,12 +320,16 @@ def finite_array_powerlaw_exponent(
         y_sizes[i] corresponds to arrays[i].
     bins : int or array-like, default=100
         If int, auto calculate bin locations and make that number of bins.
+        The auto-bin range is variable-aware and NaN-aware; see
+        :func:`finite_array_size_distribution`.
         If 1-D array: use these as log10(bin edges). They must be uniformly
         logarithmically spaced.
         If using per-array ``x_sizes``/``y_sizes`` lists with very different overall
         scales, prefer explicit ``bins``.
-    min_threshold : float, default=10
-        Smallest bin edge. If bin edges are passed, this arg is ignored.
+    min_threshold : float, optional
+        Smallest bin edge (lower edge of the auto-bin range). If not provided
+        (or ``None``), defaults to the variable-aware minimum pixel scale. If bin edges are
+        passed explicitly, this arg is ignored.
     truncation_threshold : float, default=0.5
         Float between 0 and 1. Bins with a larger fraction of truncated objects
         than this are omitted from the regression.
@@ -305,8 +390,12 @@ def finite_array_powerlaw_exponent(
 
     total_good_counts[total_good_counts < min_count_threshold] = np.nan  # remove bins with too few counts
 
-    if log_bin_middles[total_good_counts.size - 1] - np.log10(min_threshold) < 2:
-        warn(f'Power law exponent is being estimated using data spanning only {log_bin_middles[total_good_counts.size - 1] - np.log10(min_threshold):.01f} orders of magnitude')
+    # Orders of magnitude spanned by the bin range (log10 bin middles). Derived
+    # from the returned bin middles rather than min_threshold, which may be the
+    # variable-aware default sentinel.
+    span_decades = log_bin_middles[-1] - log_bin_middles[0]
+    if span_decades < 2:
+        warn(f'Power law exponent is being estimated using data spanning only {span_decades:.01f} orders of magnitude')
 
     log_bin_middles[truncation_index:] = np.nan
 
@@ -430,15 +519,18 @@ def array_size_distribution(
             valid = a > 0
             to_bin = h[valid] if variable == 'height' else w[valid]
     elif variable == 'nested perimeter':
-        to_bin = get_every_boundary_perimeter(array, x_sizes, y_sizes, False)
+        to_bin = get_every_boundary_perimeter(array, x_sizes, y_sizes, wrap=wrap)
     else:
         raise ValueError(f'Unsupported variable: {variable}')
+
+    if not isinstance(bins, int):
+        bins = np.asarray(bins)
 
     if len(to_bin) == 0:
         if isinstance(bins, int):
             return np.zeros(bins), np.zeros(bins)
         else:
-            bin_middles = bins[:-1] + 0.5 * (bins[1] - bins[0])
+            bin_middles = 0.5 * (bins[:-1] + bins[1:])
             return bin_middles, np.zeros(len(bins) - 1)
 
     if bin_logs:
@@ -453,6 +545,8 @@ def array_size_distribution(
         warn(f'There exist {variable}s outside of bin edges that are being ignored')
     counts, _ = np.histogram(to_bin, bins=bin_edges)
 
-    bin_middles = bin_edges[:-1] + 0.5 * (bin_edges[1] - bin_edges[0])  # shift to center and remove value at end that shifted beyond bins
+    # Per-bin midpoints (edges-based) — correct for both uniform and
+    # non-uniform (e.g. log-spaced) custom bin edges.
+    bin_middles = 0.5 * (bin_edges[:-1] + bin_edges[1:])
 
     return bin_middles, counts

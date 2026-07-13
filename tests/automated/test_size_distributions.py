@@ -323,6 +323,99 @@ def run_test(case_name, variable):
     )
 
 
+# Make the 45-case matrix collectable by pytest (script-mode runner below is
+# unchanged).
+try:
+    import pytest
+
+    @pytest.mark.parametrize('case_name', list(CASES))
+    @pytest.mark.parametrize('variable', VARIABLES)
+    def test_finite_size_distribution_matrix(case_name, variable):
+        run_test(case_name, variable)
+except ImportError:
+    pass
+
+
+# ============================================================================
+# Regression tests for the 2.0.0 review fixes (1, 6, 7) and shape contracts
+# ============================================================================
+
+def test_fix1_default_bins_length_units():
+    """Fix 1: variable-aware default bins keep sub-unity-pixel objects.
+
+    Codex repro: 50x50 grid, dx=dy=0.01, a 40-pixel interior line. With the old
+    [min_threshold, domain-area] default, length-unit variables were binned over
+    a range whose upper edge (0.25) was below min_threshold (10) and the line was
+    silently discarded. With variable-aware default bins it is counted.
+    """
+    grid = np.zeros((50, 50), dtype=np.float32)
+    grid[25, 5:45] = 1  # interior horizontal line, 40 px long, does not touch edge
+    dx = np.full((50, 50), 0.01, dtype=np.float64)
+    dy = np.full((50, 50), 0.01, dtype=np.float64)
+    for variable in ('summed perimeter', 'width', 'area'):
+        _, nontrunc, trunc, _ = objscale.finite_array_size_distribution(
+            grid, variable=variable, x_sizes=dx, y_sizes=dy, bins=50)
+        total = int(round(nontrunc.sum() + trunc.sum()))
+        assert total == 1, (
+            f"{variable}: expected the interior line to be counted once with "
+            f"default bins, got total={total}"
+        )
+
+
+def test_fix6_finite_accepts_list_bins():
+    """Fix 6: finite_array_size_distribution accepts array-like (list) bins."""
+    arr = np.zeros((30, 30), dtype=np.float32)
+    arr[5:8, 5:8] = 1
+    edges = list(np.linspace(0.0, 3.0, 21))  # log10 edges (bin_logs default True)
+    out = objscale.finite_array_size_distribution(arr, variable='area', bins=edges)
+    assert len(out) == 4  # (bin_middles, nontrunc, trunc, truncation_index)
+
+
+def test_fix6_array_size_distribution_log_midpoints():
+    """Fix 6: per-bin midpoints are edges-based (correct for non-uniform edges)."""
+    arr = np.zeros((30, 30), dtype=np.float32)
+    arr[5:8, 5:8] = 1
+    edges = np.geomspace(1.0, 100.0, 11)  # non-uniform (log-spaced) linear edges
+    mids, _ = objscale.array_size_distribution(
+        arr, variable='area', bins=edges, bin_logs=False)
+    expected = 0.5 * (edges[:-1] + edges[1:])
+    assert np.allclose(mids, expected), (
+        f"midpoints not edges-based: {mids} vs {expected}"
+    )
+
+
+def test_fix7_truncation_index_no_truncation_sentinel():
+    """Fix 7: with no truncated bin, truncation_index is one past the counts."""
+    _, nontrunc, trunc, trunc_idx = objscale.finite_array_size_distribution(
+        ARRAY_1, variable='area', bins=50, min_threshold=0.5)
+    assert len(nontrunc) == 50
+    assert trunc_idx == len(nontrunc), (
+        f"expected sentinel {len(nontrunc)}, got {trunc_idx}"
+    )
+
+
+def test_shape_contract_finite_powerlaw_return_counts():
+    """2.0.0 contract: finite_array_powerlaw_exponent(return_counts=True) -> (float, (arr, arr))."""
+    arr = np.zeros((30, 30), dtype=np.float32)
+    arr[5:8, 5:8] = 1
+    out = objscale.finite_array_powerlaw_exponent(
+        [arr], 'area', bins=20, return_counts=True)
+    assert isinstance(out, tuple) and len(out) == 2
+    exponent, counts = out
+    assert isinstance(exponent, float)
+    assert isinstance(counts, tuple) and len(counts) == 2
+    assert isinstance(counts[0], np.ndarray) and isinstance(counts[1], np.ndarray)
+
+
+REGRESSION_TESTS = [
+    test_fix1_default_bins_length_units,
+    test_fix6_finite_accepts_list_bins,
+    test_fix6_array_size_distribution_log_midpoints,
+    test_fix7_truncation_index_no_truncation_sentinel,
+    test_shape_contract_finite_powerlaw_return_counts,
+]
+
+
 if __name__ == '__main__':
     passed = 0
     failed = 0
@@ -336,6 +429,16 @@ if __name__ == '__main__':
                 passed += 1
             except Exception as e:
                 print(e)
+                failed += 1
+
+    for fn in REGRESSION_TESTS:
+        try:
+            fn()
+            print(f"  PASS: {fn.__name__}")
+            passed += 1
+        except Exception as e:
+            print(f"  FAIL: {fn.__name__} -- {e}")
+            failed += 1
 
     print(f"\n{passed} passed, {failed} failed out of {passed + failed} tests")
     if errors:

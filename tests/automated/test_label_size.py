@@ -32,12 +32,10 @@ def test_float_truncation():
     expected_area = 4 * 1.3 * 1.3
     actual = result[1, 1]
 
-    if abs(actual - expected_area) < 0.01:
-        print(f"  PASS  float_truncation: area={actual:.4f} (expected {expected_area:.4f})")
-        return True
-    else:
-        print(f"  FAIL  float_truncation: area={actual} (expected {expected_area:.4f}, dtype={result.dtype})")
-        return False
+    assert abs(actual - expected_area) < 0.01, (
+        f"float_truncation: area={actual} (expected {expected_area:.4f}, dtype={result.dtype})"
+    )
+    print(f"  PASS  float_truncation: area={actual:.4f} (expected {expected_area:.4f})")
 
 
 def test_nan_connectivity():
@@ -64,12 +62,11 @@ def test_nan_connectivity():
 
     # If NaN merges them, they'd both show area=3 (two 1-pixels + one NaN pixel)
     # Correct: each should be area=1
-    if val_left == 1 and val_right == 1:
-        print(f"  PASS  nan_connectivity: left={val_left}, right={val_right} (separate structures)")
-        return True
-    else:
-        print(f"  FAIL  nan_connectivity: left={val_left}, right={val_right} (expected both=1, NaN may have merged them)")
-        return False
+    assert val_left == 1 and val_right == 1, (
+        f"nan_connectivity: left={val_left}, right={val_right} "
+        f"(expected both=1, NaN may have merged them)"
+    )
+    print(f"  PASS  nan_connectivity: left={val_left}, right={val_right} (separate structures)")
 
 
 if __name__ == '__main__':
@@ -77,9 +74,12 @@ if __name__ == '__main__':
     failed = 0
 
     for test in [test_float_truncation, test_nan_connectivity]:
-        ok = test()
-        passed += ok
-        failed += (not ok)
+        try:
+            test()
+            passed += 1
+        except AssertionError as e:
+            print(f"  FAIL  {e}")
+            failed += 1
 
     print(f"\n{passed} passed, {failed} failed out of {passed + failed} tests")
     sys.exit(0 if failed == 0 else 1)

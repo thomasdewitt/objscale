@@ -827,6 +827,101 @@ def test_individual_correlation_dimension(tolerance=0.05):
 
 
 # =============================================================================
+# Regression tests for the 2.0.0 review fixes (2, 3, 5, 6) and shape contracts
+# =============================================================================
+
+def test_fix2_pixel_locations_at_centers():
+    """Fix 2: get_locations_from_pixel_sizes returns pixel centers.
+
+    For uniform unit pixels the center of pixel k along a row is k + 0.5.
+    Distances (and thus dimension estimates) are unchanged by the constant
+    half-pixel shift, but the returned coordinates themselves are centers.
+    """
+    xs = np.ones((3, 4), dtype=np.float64)
+    ys = np.ones((3, 4), dtype=np.float64)
+    lx, ly = objscale.get_locations_from_pixel_sizes(xs, ys)
+    assert np.allclose(lx[0], [0.5, 1.5, 2.5, 3.5])
+    assert np.allclose(ly[:, 0], [0.5, 1.5, 2.5])
+    # Non-uniform: centers are cumulative sum minus half the local pixel size.
+    xs2 = np.array([[1.0, 2.0, 0.5, 3.0]], dtype=np.float64)
+    lx2, _ = objscale.get_locations_from_pixel_sizes(xs2, np.ones_like(xs2))
+    assert np.allclose(lx2[0], [0.5, 2.0, 3.25, 5.0])
+
+
+def test_fix3_empty_set_sandbox_q1_is_nan():
+    """Fix 3: an empty set must give D_1 = nan, not a spurious 0.0.
+
+    method='sandbox' at q=1 previously left the un-normalized all-zero
+    partition in place and regressed it to D_1 = 0.0.
+    """
+    arr = np.zeros((128, 128), dtype=np.float64)  # no set points at all
+    D1 = objscale.ensemble_information_dimension(
+        [arr], method='sandbox', set='ones',
+        minlength=2, maxlength=40, nbins=20)
+    assert np.isnan(D1), f"expected nan for empty set, got {D1}"
+    # Directly via the sandbox estimator with a q-vector including q=1.
+    D = objscale.ensemble_sandbox_renyi_dimension(
+        [arr], q=np.array([0.0, 1.0, 2.0]), set='ones',
+        minlength=2, maxlength=40, nbins=20)
+    assert np.all(np.isnan(D)), f"expected all nan for empty set, got {D}"
+
+
+def test_fix5_individual_fractal_dimension_empty_is_nan():
+    """Fix 5: no surviving objects -> nan for both bins=int and bins=None."""
+    arr = np.zeros((20, 20), dtype=np.float32)  # no structures
+    assert np.isnan(objscale.individual_fractal_dimension([arr], bins=None))
+    assert np.isnan(objscale.individual_fractal_dimension([arr], bins=30))
+    d, ls, p = objscale.individual_fractal_dimension(
+        [arr], bins=30, return_values=True)
+    assert np.isnan(d) and len(ls) == 0 and len(p) == 0
+
+
+def test_fix6_sandbox_nonmonotonic_bins_raises():
+    """Fix 6: non-monotonic custom sandbox bins raise ValueError."""
+    arr = _synthetic_fbm_level_set(size=128, H=0.3, seed=0)
+    bad_bins = np.array([2.0, 4.0, 3.0, 8.0, 16.0])  # not strictly ascending
+    try:
+        objscale.ensemble_sandbox_renyi_dimension([arr], q=2.0, bins=bad_bins)
+        raise AssertionError("expected ValueError for non-monotonic bins")
+    except ValueError as e:
+        assert 'ascend' in str(e).lower() or 'increasing' in str(e).lower()
+
+
+def test_shape_contract_dimension_return_tuples():
+    """2.0.0 return-tuple contracts for the dimension estimators."""
+    arr = _synthetic_fbm_level_set(size=128, H=0.3, seed=0)
+
+    def check_triple(out):
+        assert isinstance(out, tuple) and len(out) == 3
+        d, a, b = out
+        assert isinstance(d, float)
+        assert isinstance(a, np.ndarray) and isinstance(b, np.ndarray)
+
+    check_triple(objscale.ensemble_box_renyi_dimension(
+        [arr], q=0.0, min_box_size=4, max_box_size=32, return_values=True))
+    check_triple(objscale.ensemble_box_dimension(
+        [arr], min_box_size=4, max_box_size=32, return_values=True))
+    check_triple(objscale.ensemble_sandbox_renyi_dimension(
+        [arr], q=2.0, minlength=2, maxlength=40, nbins=20, return_values=True))
+    check_triple(objscale.ensemble_correlation_dimension(
+        [arr], minlength=2, maxlength=40, nbins=20, return_C_l=True))
+
+    d, ls, p = objscale.individual_fractal_dimension(
+        [arr.astype(np.float32)], bins=10, return_values=True)
+    assert isinstance(d, float)
+    assert isinstance(ls, np.ndarray) and isinstance(p, np.ndarray)
+
+    # individual_correlation_dimension on a simple wide line -> (float, arr, arr)
+    line = np.full((5, 400), np.nan)
+    line[1:-1, 1:-1] = 0
+    line[2, 2:-2] = 1
+    out = objscale.individual_correlation_dimension(line, n=1, return_C_l=True)
+    assert isinstance(out, tuple) and len(out) == 3
+    assert isinstance(out[0], float)
+    assert isinstance(out[1], np.ndarray) and isinstance(out[2], np.ndarray)
+
+
+# =============================================================================
 # Main test runner
 # =============================================================================
 
@@ -1018,6 +1113,11 @@ def run_all_tests():
         test_sandbox_gp_equivalence_at_q2,
         test_sandbox_duplicate_q1,
         test_information_dimension_method_parameter,
+        test_fix2_pixel_locations_at_centers,
+        test_fix3_empty_set_sandbox_q1_is_nan,
+        test_fix5_individual_fractal_dimension_empty_is_nan,
+        test_fix6_sandbox_nonmonotonic_bins_raises,
+        test_shape_contract_dimension_return_tuples,
     ]
     for test_func in standalone_tests:
         try:

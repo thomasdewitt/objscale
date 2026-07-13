@@ -22,6 +22,18 @@ Notable changes to objscale. Format follows [Keep a Changelog](https://keepachan
 - Skill source-of-truth moved from `agent-skills/objscale/SKILL.md` to `objscale/SKILL.md`.
 - Runtime dependencies trimmed to numpy, scipy, scikit-image, numba; `scaleinvariance` and `matplotlib` (test-only) moved to the `dev` extra.
 
+### Fixed
+
+- Size-distribution default bins are now variable-aware and NaN-aware: width/height/summed-perimeter/nested-perimeter are binned over a physical length range instead of the domain area, so valid objects on sub-unity-pixel grids are no longer silently discarded. `min_threshold` now defaults to the variable-aware minimum pixel scale (pass a value, or `None` for the default).
+- `get_every_boundary_perimeter` and `array_size_distribution(variable='nested perimeter')` now honor `wrap`, correctly merging boundaries across periodic seams (previously silently planar even with `wrap='both'`).
+- `get_locations_from_pixel_sizes` now returns pixel centers rather than right/bottom edges (removes a distance bias on nonuniform grids; uniform grids unaffected).
+- `ensemble_sandbox_renyi_dimension` / `ensemble_information_dimension(method='sandbox')` return `nan` for an empty set at q=1 instead of a spurious `D_1 = 0.0`.
+- `individual_fractal_dimension` returns `nan` for empty/fully-filtered input under both `bins=int` and `bins=None`, instead of raising with binning enabled.
+- `finite_array_size_distribution` / `finite_array_powerlaw_exponent` accept array-like `bins` (lists) without raising.
+- `array_size_distribution` computes per-bin midpoints from the actual bin edges (correct for non-uniform custom bins).
+- Sandbox estimators validate that custom `bins` are strictly ascending.
+- `truncation_index` sentinel when no bin crosses the truncation threshold is now `len(bin_edges) - 1` (one past the count arrays).
+
 ## [1.4.0] - 2026-06-01
 
 ### Added

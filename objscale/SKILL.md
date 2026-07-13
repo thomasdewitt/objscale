@@ -144,6 +144,8 @@ objscale.ensemble_correlation_dimension(
 
 Thin wrapper around `ensemble_sandbox_renyi_dimension(..., q=2.0, set='edge')`. The sandbox q=2 partition function `sum_i M_i(r)` is exactly the Grassberger-Procaccia correlation integral, so this name is preserved as the standard q=2 entry point.
 
+Correlation and sandbox dimensions can be computationally expensive for large datasets. Experiment with `point_reduction_factor` in these cases - it's almost always fine to set this to 100, 1000, or higher, for very large datasets (e.g. 100 masks of 2048^2).
+
 `interior_circles_only` defaults to `False`; see ["Correlation dimension and domain boundary effects"](https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html) for the rationale.
 
 ```python
@@ -240,26 +242,28 @@ Information dimension D_1 (the q=1 Rényi dimension). Dispatches to `ensemble_sa
 ```python
 objscale.finite_array_powerlaw_exponent(
     arrays,                    # Binary arrays (list or single)
-    variable,                  # 'area', 'perimeter', 'width', 'height', 'nested perimeter'
+    variable,                  # 'area', 'summed perimeter', 'width', 'height', 'nested perimeter'
     x_sizes=None,              # Pixel sizes in x
     y_sizes=None,              # Pixel sizes in y
     bins=100,                  # Number of bins or array of log10(bin edges)
-    min_threshold=10,          # Minimum object size
+    min_threshold=None,        # Lower bin edge; default: variable-aware min pixel scale
     truncation_threshold=0.5,  # Max fraction of truncated objects per bin
     min_count_threshold=30,    # Min objects per bin for regression
     return_counts=False        # Return (exponent, (log10_bins, log10_counts))
 ) -> exponent | (exponent, (log10_bins, log10_counts))
 ```
 
+Default auto-bins (when `bins` is an int) span a variable-aware physical range: min pixel area to domain area for `'area'`; min pixel length to max row/column extent for `'width'`/`'height'`; min pixel length to the space-filling bound for perimeters. Pass explicit bins for full control.
+
 ```python
 objscale.finite_array_size_distribution(
     arrays,                    # Binary arrays (list or single)
-    variable,                  # 'area', 'perimeter', 'width', 'height', 'nested perimeter'
+    variable,                  # 'area', 'summed perimeter', 'width', 'height', 'nested perimeter'
     x_sizes=None,              # Pixel sizes in x
     y_sizes=None,              # Pixel sizes in y
     bins=100,                  # Number of bins or array of bin edges
     bin_logs=True,             # If True, bins are log-spaced
-    min_threshold=10,          # Minimum bin edge
+    min_threshold=None,        # Lower bin edge; default: variable-aware min pixel scale
     truncation_threshold=0.5   # Threshold for truncation dominance
 ) -> (bin_middles, nontruncated_counts, truncated_counts, truncation_index)
 ```
@@ -267,7 +271,7 @@ objscale.finite_array_size_distribution(
 ```python
 objscale.array_size_distribution(
     array,                 # Single binary array
-    variable='area',       # 'area', 'perimeter', 'width', 'height', 'nested perimeter'
+    variable='area',       # 'area', 'summed perimeter', 'width', 'height', 'nested perimeter'
     bins=30,               # Number of bins or array of bin edges
     bin_logs=True,         # If True, bin log10(variable)
     structure=...,         # Connectivity structure (default: 4-connected)
@@ -284,7 +288,8 @@ objscale.get_every_boundary_perimeter(
     array,                 # 2D binary array (0s and 1s)
     x_sizes,               # Pixel sizes in x
     y_sizes,               # Pixel sizes in y
-    return_nlevels=False   # Also return number of nesting levels
+    return_nlevels=False,  # Also return number of nesting levels
+    wrap=None              # None, 'sides', or 'both' (periodic seams merge boundaries)
 ) -> list | (list, int)   # Perimeters of each boundary (incl. nested holes)
 ```
 
@@ -443,7 +448,7 @@ objscale.get_coords_of_boundaries(
 objscale.get_locations_from_pixel_sizes(
     pixel_sizes_x,    # 2D array of pixel sizes in x
     pixel_sizes_y     # 2D array of pixel sizes in y
-) -> (locations_x, locations_y)   # Cumulative location coordinates
+) -> (locations_x, locations_y)   # Pixel-center coordinates (cumulative sums minus half a pixel)
 ```
 
 ```python

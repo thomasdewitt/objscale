@@ -367,7 +367,7 @@ def _box_renyi_from_set(
     q_arr: NDArray,
     box_sizes: NDArray,
     box_origin_shift: tuple[float, float],
-) -> tuple[NDArray, NDArray, NDArray]:
+) -> tuple[NDArray, NDArray]:
     """Core box-Rényi routine: count 1-pixels per box, fit slopes.
 
     Parameters
@@ -389,8 +389,6 @@ def _box_renyi_from_set(
     -------
     D_q : np.ndarray, shape (len(q_arr),)
         Estimated Rényi dimension for each ``q``.
-    err : np.ndarray, shape (len(q_arr),)
-        95% CI half-width for each estimate.
     partition : np.ndarray, shape (len(q_arr), len(box_sizes))
         ``Z_q^(p)(eps)`` for q != 1, ``-S_1(eps)`` for q == 1, in the same
         order as ``q_arr``. Useful for plotting and diagnostics.
@@ -458,7 +456,6 @@ def _box_renyi_from_set(
     # Fit slopes
     log_eps = np.log10(box_sizes.astype(np.float64))
     D_q = np.full(nq, np.nan, dtype=np.float64)
-    err = np.full(nq, np.nan, dtype=np.float64)
     for qi in range(nq):
         q = float(q_arr[qi])
         y = partition[qi].copy()
@@ -468,17 +465,15 @@ def _box_renyi_from_set(
         else:
             # Z_q is non-negative; log it.
             yfit = np.where(y > 0, np.log10(y), np.nan)
-        (slope, _), (slope_err, _) = linear_regression(log_eps, yfit)
+        (slope, _), _ = linear_regression(log_eps, yfit)
         if not np.isfinite(slope):
             continue
         if abs(q - 1.0) < 1e-10:
             D_q[qi] = -slope
-            err[qi] = slope_err
         else:
             D_q[qi] = slope / (q - 1.0)
-            err[qi] = slope_err / abs(q - 1.0)
 
-    return D_q, err, partition
+    return D_q, partition
 
 
 def ensemble_box_renyi_dimension(
@@ -669,7 +664,7 @@ def ensemble_box_renyi_dimension(
         else:  # 'edge'
             set_arrays.append(_one_sided_edge_mask(np.asarray(arr) > 0))
 
-    D_q, _err, partition = _box_renyi_from_set(
+    D_q, partition = _box_renyi_from_set(
         set_arrays, q_arr, box_sizes_arr, box_origin_shift
     )
 
@@ -1039,6 +1034,13 @@ def ensemble_sandbox_renyi_dimension(
         bins = np.geomspace(minlength, maxlength, bins)
     bins = np.asarray(bins, dtype=np.float64)
 
+    if bins.ndim != 1 or bins.size < 2:
+        raise ValueError('bins must be a 1-D array of at least 2 edges')
+    if np.any(np.diff(bins) <= 0):
+        raise ValueError(
+            'bins must be strictly ascending; non-monotonic bins produce a '
+            'meaningless dimension estimate.'
+        )
     if bins[-1] <= bins[0]:
         raise ValueError(
             f'bin maximum length ({bins[-1]:.3f}) must be greater than bin '
@@ -1162,7 +1164,13 @@ def ensemble_sandbox_renyi_dimension(
         y = Z_total[qi].copy()
         q_val = float(q_arr[qi])
         if is_q1[qi]:
-            # Z[qi] is already <log10 M_i> linear in log10 r.
+            # Z[qi] is already <log10 M_i> linear in log10 r. With no centers
+            # (empty set, or every center removed by point_reduction_factor),
+            # Z is an un-normalized all-zero array that would regress to a
+            # spurious D_1 = 0; leave the estimate as NaN instead, matching the
+            # q != 1 paths (whose y > 0 mask yields NaN there).
+            if n_centers_total == 0:
+                continue
             y_fit = y
         else:
             y_fit = np.full_like(y, np.nan)
@@ -1398,6 +1406,14 @@ def individual_fractal_dimension(
     mask = (length_scales > min_length_scale) & (length_scales < max_length_scale)
     length_scales, perimeters = length_scales[mask], perimeters[mask]
 
+    # No surviving objects (e.g. all touched the border, or none passed the
+    # length-scale filter). Return NaN for both the bins=int and bins=None
+    # paths, rather than letting .min()/.max() on an empty array raise.
+    if length_scales.size == 0:
+        if return_values:
+            return np.nan, np.array([]), np.array([])
+        return np.nan
+
     log_ls = np.log10(length_scales)
     log_p = np.log10(perimeters)
 
@@ -1496,11 +1512,22 @@ def get_locations_from_pixel_sizes(
     Returns
     -------
     locations_x : np.ndarray
-        Cumulative x locations.
+        Physical x coordinate of each pixel center.
     locations_y : np.ndarray
-        Cumulative y locations.
+        Physical y coordinate of each pixel center.
+
+    Notes
+    -----
+    Coordinates are pixel *centers*: the cumulative sum of pixel sizes minus
+    half the local pixel size along each axis. For uniform grids this is a
+    constant half-pixel shift, so pairwise distances (and thus any dimension
+    estimate built from them) are unchanged relative to the former
+    right/bottom-edge convention.
     """
-    return np.nancumsum(pixel_sizes_x, 1), np.nancumsum(pixel_sizes_y, 0)
+    return (
+        np.nancumsum(pixel_sizes_x, 1) - 0.5 * pixel_sizes_x,
+        np.nancumsum(pixel_sizes_y, 0) - 0.5 * pixel_sizes_y,
+    )
 
 
 @numba.njit(parallel=True, fastmath=True)

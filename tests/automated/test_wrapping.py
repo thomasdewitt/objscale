@@ -248,6 +248,79 @@ EXPECTED_8_BOTH_COUNT = 1
 
 
 # =============================================================================
+# Fix 4: nested perimeter must respect wrap
+# =============================================================================
+
+def _boundary_perims(array, wrap):
+    from objscale._object_analysis import get_every_boundary_perimeter
+    xs = np.ones_like(array, dtype=np.float32)
+    ys = np.ones_like(array, dtype=np.float32)
+    return sorted(float(p) for p in
+                  get_every_boundary_perimeter(array, xs, ys, wrap=wrap))
+
+
+def test_nested_perimeter_seam_merges():
+    """(a) Two pixels adjacent across a periodic seam form ONE boundary.
+
+    With wrapping the two edge pixels merge into a single 1x2 bar whose
+    boundary perimeter is 6; without wrapping they are two separate boundaries.
+    """
+    arr = np.zeros((5, 4), dtype=np.float32)
+    arr[2, 0] = 1
+    arr[2, 3] = 1
+    assert _boundary_perims(arr, 'both') == [6.0]
+    assert _boundary_perims(arr, 'sides') == [6.0]
+    # wrap=None: no seam merge -> two separate boundaries (previous behavior)
+    assert _boundary_perims(arr, None) == [3.0, 3.0]
+
+
+def test_nested_perimeter_roll_invariance():
+    """(b) For a fully periodic array, sorted nested perimeters are roll-invariant."""
+    ring = np.zeros((10, 10), dtype=np.float32)
+    ring[1:6, 1:6] = 1
+    ring[2:5, 2:5] = 0  # 5x5 ring with 3x3 hole
+    base = _boundary_perims(ring, 'both')
+    for dr, dc in [(0, 0), (3, 7), (5, 5), (-2, 4), (9, 9), (4, 0), (0, 6)]:
+        rolled = np.roll(np.roll(ring, dr, axis=0), dc, axis=1)
+        assert _boundary_perims(rolled, 'both') == base, (
+            f"roll ({dr},{dc}) changed perimeters: {base} -> "
+            f"{_boundary_perims(rolled, 'both')}"
+        )
+
+
+def test_nested_perimeter_donut_crosses_seam():
+    """(c) A donut crossing the seam gives 2 boundaries with the ring values."""
+    ring = np.zeros((10, 10), dtype=np.float32)
+    ring[1:6, 1:6] = 1
+    ring[2:5, 2:5] = 0
+    # Roll so the ring straddles both seams
+    rolled = np.roll(np.roll(ring, -3, axis=0), -3, axis=1)
+    assert _boundary_perims(rolled, 'both') == [12.0, 20.0]
+
+
+def test_nested_perimeter_wrap_none_matches_size_distribution():
+    """(d) array_size_distribution forwards wrap to nested perimeter."""
+    arr = np.zeros((5, 4), dtype=np.float32)
+    arr[2, 0] = 1
+    arr[2, 3] = 1
+    # wrap=None -> 2 boundaries; wrap='both' -> 1 boundary
+    _, counts_none = objscale.array_size_distribution(
+        arr, variable='nested perimeter', bins=50, wrap=None)
+    _, counts_both = objscale.array_size_distribution(
+        arr, variable='nested perimeter', bins=50, wrap='both')
+    assert int(round(counts_none.sum())) == 2
+    assert int(round(counts_both.sum())) == 1
+
+
+NESTED_WRAP_TESTS = [
+    test_nested_perimeter_seam_merges,
+    test_nested_perimeter_roll_invariance,
+    test_nested_perimeter_donut_crosses_seam,
+    test_nested_perimeter_wrap_none_matches_size_distribution,
+]
+
+
+# =============================================================================
 # Test runner
 # =============================================================================
 
@@ -266,7 +339,7 @@ def check(label, actual, expected):
     return True
 
 
-def test_array(name, array, expected):
+def _run_array_props(name, array, expected):
     """Test get_structure_areas/perimeters/height_width on one array."""
     xs = np.ones_like(array, dtype=np.float32)
     ys = np.ones_like(array, dtype=np.float32)
@@ -316,7 +389,7 @@ def test_array(name, array, expected):
     return passed, failed
 
 
-def test_size_distribution(name, array, wrap, expected_n):
+def _run_size_distribution(name, array, wrap, expected_n):
     """Test array_size_distribution returns correct count with wrapping."""
     _, counts = objscale.array_size_distribution(
         array, variable='area', bins=50, wrap=wrap,
@@ -344,7 +417,7 @@ def run_all_tests():
     ]
 
     for name, array, expected in tests:
-        p, f = test_array(name, array, expected)
+        p, f = _run_array_props(name, array, expected)
         total_passed += p
         total_failed += f
 
@@ -355,9 +428,19 @@ def run_all_tests():
         ('ARRAY_8', ARRAY_8_BASE, 'both', EXPECTED_8_BOTH_COUNT),
     ]
     for name, array, wrap, expected_n in sd_tests:
-        p, f = test_size_distribution(name, array, wrap, expected_n)
+        p, f = _run_size_distribution(name, array, wrap, expected_n)
         total_passed += p
         total_failed += f
+
+    # Nested-perimeter wrap tests (Fix 4)
+    for fn in NESTED_WRAP_TESTS:
+        try:
+            fn()
+            print(f"  PASS  {fn.__name__}")
+            total_passed += 1
+        except AssertionError as e:
+            print(f"  FAIL  {fn.__name__}: {e}")
+            total_failed += 1
 
     print(f"\n{total_passed} passed, {total_failed} failed out of {total_passed + total_failed} tests")
     return total_failed == 0

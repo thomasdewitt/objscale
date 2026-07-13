@@ -583,11 +583,19 @@ def get_structure_props(
 
 
 
+def _pad_top_bottom_nan(a: NDArray) -> NDArray:
+    """Pad a 2-D array with a single NaN row on top and bottom (columns periodic)."""
+    a = np.asarray(a, dtype=np.float32)
+    nan_row = np.full((1, a.shape[1]), np.nan, dtype=np.float32)
+    return np.concatenate([nan_row, a, nan_row], axis=0)
+
+
 def get_every_boundary_perimeter(
     array: NDArray,
     x_sizes: NDArray,
     y_sizes: NDArray,
-    return_nlevels: bool = False
+    return_nlevels: bool = False,
+    wrap: str | None = None,
 ) -> list | tuple[list, int]:
     """
     Return perimeters of each boundary between 0s and 1s.
@@ -606,6 +614,13 @@ def get_every_boundary_perimeter(
         Sizes of pixels in vertical direction, same shape as array.
     return_nlevels : bool, default=False
         If True, also return the number of nesting levels processed.
+    wrap : str or None, default=None
+        Boundary wrapping. ``None`` (default) treats every domain edge as a
+        hard boundary (planar topology): the array is NaN-encased on all four
+        sides. ``'sides'`` makes the left/right edges periodic; ``'both'``
+        makes all edges periodic (toroidal). Under wrapping, only the
+        non-wrapped edges are NaN-encased, and hole-filling / labelling respect
+        the same periodicity.
 
     Returns
     -------
@@ -617,17 +632,50 @@ def get_every_boundary_perimeter(
     Raises
     ------
     ValueError
-        If more than 100 nesting levels are found (likely infinite loop).
+        If more than 100 nesting levels are found (likely infinite loop), or if
+        ``wrap`` is not one of ``None``, ``'sides'``, ``'both'``.
+
+    Notes
+    -----
+    On a torus (``wrap='sides'`` or ``'both'``), a structure that wraps around
+    the whole domain has no unambiguous "inside": which region is hole vs.
+    background follows :func:`remove_structure_holes`'s convention that the
+    largest connected region of 0s is the background.
+
+    .. versionchanged:: 2.0.0
+        Added the ``wrap`` parameter. Previously this function always used
+        planar topology for NaN-encasing while labelling with ``wrap='both'``,
+        which mishandled structures spanning a periodic seam.
     """
-    # Encase once up front: pad + pixel-size arrays never change shape or content.
-    # Interior NaNs (e.g. satellite "no data" inside a cloud) MUST be preserved
-    # across iterations — `remove_structure_holes` treats NaN as not-a-hole, and
-    # `NaN - NaN = NaN` keeps the pattern through the layer subtraction. If we
-    # collapsed them to 0, a surrounded NaN would be filled on iteration 1 and
-    # then emerge as a spurious structure on iteration 2.
-    work = encase_in_value(array).astype(np.float32, copy=False)
-    enc_xs = encase_in_value(x_sizes)
-    enc_ys = encase_in_value(y_sizes)
+    if wrap not in (None, 'sides', 'both'):
+        raise ValueError(f"wrap={wrap!r} not supported (use None, 'sides', or 'both')")
+
+    # NaN-encase only the non-wrapped edges so the perimeter kernel (which
+    # assumes toroidal topology) treats hard edges as domain boundaries while
+    # leaving periodic edges to wrap. Interior NaNs (e.g. satellite "no data"
+    # inside a cloud) MUST be preserved across iterations — `remove_structure_holes`
+    # treats NaN as not-a-hole, and `NaN - NaN = NaN` keeps the pattern through
+    # the layer subtraction. If we collapsed them to 0, a surrounded NaN would be
+    # filled on iteration 1 and then emerge as a spurious structure on iteration 2.
+    if wrap is None:
+        work = encase_in_value(array).astype(np.float32, copy=False)
+        enc_xs = encase_in_value(x_sizes)
+        enc_ys = encase_in_value(y_sizes)
+        label_wrap = 'both'  # fully NaN-padded, so equivalent to no merging
+        hole_periodic = False
+    elif wrap == 'sides':
+        # Left/right periodic; pad top/bottom with NaN as hard edges.
+        work = _pad_top_bottom_nan(array).astype(np.float32, copy=False)
+        enc_xs = _pad_top_bottom_nan(x_sizes)
+        enc_ys = _pad_top_bottom_nan(y_sizes)
+        label_wrap = 'sides'
+        hole_periodic = 'sides'
+    else:  # wrap == 'both'
+        work = np.asarray(array).astype(np.float32, copy=True)
+        enc_xs = np.asarray(x_sizes)
+        enc_ys = np.asarray(y_sizes)
+        label_wrap = 'both'
+        hole_periodic = 'both'
 
     # NaN mask (pad + interior NaN) is static across iterations because NaN
     # positions never move under the layer-subtract.
@@ -641,8 +689,8 @@ def get_every_boundary_perimeter(
         counter += 1
         if counter > 100:
             raise ValueError('Hole layer limit reached: 100 layers')
-        all_holes_filled = remove_structure_holes(work)
-        lab, _, nl = label_structures(all_holes_filled, wrap='both')
+        all_holes_filled = remove_structure_holes(work, periodic=hole_periodic)
+        lab, _, nl = label_structures(all_holes_filled, wrap=label_wrap)
         if lab is not None:
             # Pass the pre-computed NaN mask explicitly so the perim kernel
             # correctly skips edges to NaN even though we reuse it each iteration.

@@ -283,6 +283,19 @@ def run_test(case_name, variable):
     )
 
 
+# Make the boundary matrix collectable by pytest (script-mode runner below is
+# unchanged).
+try:
+    import pytest
+
+    @pytest.mark.parametrize('case_name', list(CASES))
+    @pytest.mark.parametrize('variable', VARIABLES)
+    def test_finite_size_distribution_boundaries_matrix(case_name, variable):
+        run_test(case_name, variable)
+except ImportError:
+    pass
+
+
 if __name__ == '__main__':
     passed = 0
     failed = 0
