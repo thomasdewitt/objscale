@@ -1,5 +1,5 @@
-![Correlation dimension example from DeWitt et al. (2025)](docs/images/correlation_dimension_example-1.png)
-*Figure from DeWitt et al. (2025)*
+![Correlation dimension example from DeWitt et al. (2026)](docs/images/correlation_dimension_example-1.png)
+*Figure from DeWitt et al. (2026)*
 
 # objscale
 
@@ -12,7 +12,7 @@ Object-based analysis functions for fractal dimensions and size distributions in
 The package implements methods from two main papers:
 
 - [DeWitt & Garrett (2024)](https://acp.copernicus.org/articles/24/8457/2024/acp-24-8457-2024.html) - finite domain effects in size distributions  
-- [DeWitt et al. (2025)](https://egusphere.copernicus.org/preprints/2025/egusphere-2025-3486/) - fractal dimensions for cloud field characterization
+- [DeWitt et al. (2026)](https://acp.copernicus.org/articles/26/6951/2026/) - toward less subjective metrics for quantifying the shape and organization of clouds
 
 See the [interactive scaling explorer](https://thomasddewitt.com/visuals-and-tools/scaling-explorer/index.html) to visualize how the correlation dimension is computed.
 
@@ -52,19 +52,19 @@ Complete API reference, detailed examples, and usage guides are available at [ob
 
 ## Agent Skill (Highly Recommended for Agents)
 
-An agent skill is included in this repository. For Claude Code:
+An agent skill ships inside the pip package, so it always matches the installed version. After `pip install objscale`, install it for Claude Code:
 
 ```bash
-mkdir -p ~/.claude/skills/objscale
-cp agent-skills/objscale/SKILL.md ~/.claude/skills/objscale/
+python -c "import objscale; objscale.install_agent_skill('claude')"
 ```
 
 Codex:
 
 ```bash
-mkdir -p ~/.codex/skills/objscale
-cp agent-skills/objscale/SKILL.md ~/.codex/skills/objscale/
+python -c "import objscale; objscale.install_agent_skill('codex')"
 ```
+
+For other agent frameworks, copy the skill file manually from the path given by `objscale.skill_path()`.
 
 ## Quick Example
 
@@ -76,17 +76,21 @@ import numpy as np
 arrays = [(np.random.random((1000, 1000)) < 0.3).astype(int) for _ in range(4)]
 
 # Size distribution with finite domain corrections
-(exponent, error), (log10_sizes, log10_counts) = objscale.finite_array_powerlaw_exponent(
+exponent, (log10_sizes, log10_counts) = objscale.finite_array_powerlaw_exponent(
     arrays, 'area', return_counts=True
 )
 
 # Ensemble fractal dimensions
-corr_dim, corr_error = objscale.ensemble_correlation_dimension(arrays)
-box_dim, box_error = objscale.ensemble_box_dimension(arrays)
+corr_dim = objscale.ensemble_correlation_dimension(arrays)
+box_dim = objscale.ensemble_box_dimension(arrays)
 
 # Individual object analysis  
-ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
+ind_dim = objscale.individual_fractal_dimension(arrays)
 ```
+
+### A note on uncertainty
+
+As of v2.0.0, exponent and dimension estimators return point estimates only. Earlier versions returned uncertainties computed as 2× the OLS standard error of the regression slope, but these assume statistically independent data points. Points on a scaling function computed from a fractal or multifractal field are strongly correlated across scales, so those uncertainties were badly miscalibrated ([demonstration here](https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html)). If you need uncertainty estimates, bootstrap across statistically independent images instead. `linear_regression` still returns its error estimates, which are valid for independent data only.
 
 ## Features
 
@@ -157,6 +161,10 @@ If you use this package, please cite:
 DeWitt, T. D. and Garrett, T. J.: Finite domains cause bias in measured and modeled 
 distributions of cloud sizes, Atmos. Chem. Phys., 24, 8457–8472, 
 https://doi.org/10.5194/acp-24-8457-2024, 2024.
+
+DeWitt, T. D., Garrett, T. J., and Rees, K. N.: Toward less subjective metrics for 
+quantifying the shape and organization of clouds, Atmos. Chem. Phys., 26, 6951–6971, 
+https://doi.org/10.5194/acp-26-6951-2026, 2026.
 
 ## Author
 

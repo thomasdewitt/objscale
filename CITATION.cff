@@ -7,8 +7,8 @@ authors:
     email: "thomas.dewitt@utah.edu"
     orcid: "https://orcid.org/0009-0003-9591-1690"
 title: "objscale: Object-based analysis functions for fractal dimensions and size distributions"
-version: "0.2.0"
-date-released: "2026-01-28"
+version: "2.0.0"
+date-released: "2026-07-13"
 url: "https://github.com/thomasdewitt/objscale"
 repository-code: "https://github.com/thomasdewitt/objscale"
 license: MIT
@@ -29,3 +29,32 @@ abstract: >-
   manipulation, and various utility functions for scientific computing
   applications.
 doi: "10.5281/zenodo.16114656"
+references:
+  - type: article
+    authors:
+      - family-names: "DeWitt"
+        given-names: "Thomas D."
+      - family-names: "Garrett"
+        given-names: "Timothy J."
+    title: "Finite domains cause bias in measured and modeled distributions of cloud sizes"
+    journal: "Atmospheric Chemistry and Physics"
+    volume: 24
+    start: 8457
+    end: 8472
+    year: 2024
+    doi: "10.5194/acp-24-8457-2024"
+  - type: article
+    authors:
+      - family-names: "DeWitt"
+        given-names: "Thomas D."
+      - family-names: "Garrett"
+        given-names: "Timothy J."
+      - family-names: "Rees"
+        given-names: "Karlie N."
+    title: "Toward less subjective metrics for quantifying the shape and organization of clouds"
+    journal: "Atmospheric Chemistry and Physics"
+    volume: 26
+    start: 6951
+    end: 6971
+    year: 2026
+    doi: "10.5194/acp-26-6951-2026"
