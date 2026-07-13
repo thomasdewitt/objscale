@@ -2,12 +2,12 @@
 
 ## Agent Skill
 
-The agent skill file lives at `agent-skills/objscale/SKILL.md` in this repo. This is the source of truth.
+The agent skill file lives at `objscale/SKILL.md` in this repo (inside the package, so it ships in the wheel). This is the source of truth. Never edit the installed copy in `~/.claude/skills/` directly.
 
-**When publishing a new version**, always update the skill file to reflect any API changes, then install it locally:
+**When publishing a new version**, always update the skill file to reflect any API changes (including the version number at the top), then install it locally:
 
 ```bash
-cp agent-skills/objscale/SKILL.md ~/.claude/skills/objscale/
+cp objscale/SKILL.md ~/.claude/skills/objscale/
 ```
 
 ## Tests
