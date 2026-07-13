@@ -206,7 +206,7 @@ def finite_array_powerlaw_exponent(
     truncation_threshold: float = 0.5,
     min_count_threshold: int = 30,
     return_counts: bool = False
-) -> tuple[float, float] | tuple[tuple[float, float], tuple[NDArray, NDArray]]:
+) -> float | tuple[float, tuple[NDArray, NDArray]]:
     """
     Calculate the power-law exponent for size distributions of structures.
 
@@ -257,12 +257,22 @@ def finite_array_powerlaw_exponent(
     -------
     exponent : float
         The power-law exponent.
-    error : float
-        Error estimate (95% confidence interval).
-    log_bin_middles : np.ndarray, optional
-        Log10 of bin middle values. Only returned if return_counts=True.
-    log_counts : np.ndarray, optional
-        Log10 of counts used in regression. Only returned if return_counts=True.
+    counts : tuple of np.ndarray, optional
+        ``(log_bin_middles, log_counts)``: log10 of the bin middle values and
+        log10 of the counts used in the regression. Only returned if
+        ``return_counts=True``, as a single nested tuple
+        ``(exponent, (log_bin_middles, log_counts))``.
+
+    .. versionchanged:: 2.0.0
+        No longer returns an uncertainty estimate. The previously reported
+        error was ``2 x`` the OLS standard error of the log-log fit, which
+        assumes independent residuals; the points of a size distribution
+        derived from a fractal/multifractal field are strongly correlated
+        across scales, so that error is badly miscalibrated (demonstrated by
+        bootstrap in the section "Statistical error and parameter uncertainty"
+        at https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html).
+        Users who need an uncertainty should bootstrap the exponent across
+        statistically independent images.
 
     Notes
     -----
@@ -304,11 +314,11 @@ def finite_array_powerlaw_exponent(
 
     log_total_good_counts = np.log10(total_good_counts)
 
-    (slope, _), (slope_error, _) = linear_regression(log_bin_middles, log_total_good_counts)
+    (slope, _), _ = linear_regression(log_bin_middles, log_total_good_counts)
 
     if return_counts:
-        return (-slope, slope_error), (log_bin_middles, log_total_good_counts)
-    return -slope, slope_error
+        return -slope, (log_bin_middles, log_total_good_counts)
+    return -slope
 
 
 def array_size_distribution(

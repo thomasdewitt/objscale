@@ -43,48 +43,41 @@ def main():
     # Calculate power-law exponents and get distribution data
     s = time.time()
     print("Calculating area power-law exponent and distribution...")
-    (area_exponent, area_error), (area_sizes, area_counts) = objscale.finite_array_powerlaw_exponent(
+    area_exponent, (area_sizes, area_counts) = objscale.finite_array_powerlaw_exponent(
         arrays, 'area', bins=50, min_threshold=10, return_counts=True
     )
-    
+
     print("Calculating perimeter power-law exponent and distribution...")
-    (perim_exponent, perim_error), (perim_sizes, perim_counts) = objscale.finite_array_powerlaw_exponent(
+    perim_exponent, (perim_sizes, perim_counts) = objscale.finite_array_powerlaw_exponent(
         arrays, 'perimeter', bins=50, min_threshold=10, return_counts=True
     )
-    
+
     print(f'Power law exponents took {time.time()-s:.02f} seconds')
-    print(f"    Area exponent: {area_exponent:.3f} ± {area_error:.3f}")
-    print(f"    Perimeter exponent: {perim_exponent:.3f} ± {perim_error:.3f}")
-    
+    print(f"    Area exponent: {area_exponent:.3f}")
+    print(f"    Perimeter exponent: {perim_exponent:.3f}")
+
     # Calculate correlation dimension
     print("Calculating correlation dimension...")
-    corr_dim, corr_error, corr_lengths, corr_integrals = objscale.ensemble_correlation_dimension(
+    corr_dim, corr_lengths, corr_integrals = objscale.ensemble_correlation_dimension(
         arrays, return_C_l=True, point_reduction_factor=1000, maxlength='auto', interior_circles_only=False
     )
-    print(f"Correlation dimension: {corr_dim:.3f} ± {corr_error:.3f}")
-    
+    print(f"Correlation dimension: {corr_dim:.3f}")
+
     # Calculate box dimension
     print("Calculating box dimension...")
-    box_dim, box_error, box_sizes, box_counts = objscale.ensemble_box_dimension(
+    box_dim, box_sizes, box_counts = objscale.ensemble_box_dimension(
         arrays, return_values=True
     )
-    print(f"Box dimension: {box_dim:.3f} ± {box_error:.3f}")
-    
+    print(f"Box dimension: {box_dim:.3f}")
+
     # Calculate individual fractal dimensions
     print("Calculating individual fractal dimensions...")
     individual_dims = []
     for i, array in enumerate(arrays):
-        dim, error = objscale.individual_fractal_dimension([array])
-        individual_dims.append((dim, error))
-        print(f"  Array {i+1}: {dim:.3f} ± {error:.3f}")
-    
-    # Calculate coarsening dimension
-    print("Calculating coarsening dimension...")
-    coarsening_dim, coarsening_error, coarsening_factors, mean_total_perimeters = objscale.ensemble_coarsening_dimension(
-        arrays, return_values=True, min_pixels = 3
-    )
-    print(f"Coarsening dimension: {coarsening_dim:.3f} ± {coarsening_error:.3f}")
-    
+        dim = objscale.individual_fractal_dimension([array])
+        individual_dims.append(dim)
+        print(f"  Array {i+1}: {dim:.3f}")
+
     print("\n=== TESTING ADDITIONAL FUNCTIONS ===")
     
     # Test total_number
@@ -178,7 +171,7 @@ def main():
     ax1.loglog(10**area_sizes, 10**area_counts, 'bo-', markersize=4, linewidth=1)
     ax1.set_xlabel('Area')
     ax1.set_ylabel('Count')
-    ax1.set_title(f'Area Distribution\nExponent: {area_exponent:.3f} ± {area_error:.3f}')
+    ax1.set_title(f'Area Distribution\nExponent: {area_exponent:.3f}')
     ax1.grid(True, alpha=0.3)
     
     # Plot perimeter distribution (convert from log10 back to linear for plotting)
@@ -186,7 +179,7 @@ def main():
     ax2.loglog(10**perim_sizes, 10**perim_counts, 'ro-', markersize=4, linewidth=1)
     ax2.set_xlabel('Perimeter')
     ax2.set_ylabel('Count')
-    ax2.set_title(f'Perimeter Distribution\nExponent: {perim_exponent:.3f} ± {perim_error:.3f}')
+    ax2.set_title(f'Perimeter Distribution\nExponent: {perim_exponent:.3f}')
     ax2.grid(True, alpha=0.3)
     
     # Plot correlation integral
@@ -194,7 +187,7 @@ def main():
     ax3.loglog(corr_lengths, corr_integrals, 'go-', markersize=4, linewidth=1)
     ax3.set_xlabel('Length Scale')
     ax3.set_ylabel('Correlation Integral')
-    ax3.set_title(f'Correlation Integral\nDimension: {corr_dim:.3f} ± {corr_error:.3f}')
+    ax3.set_title(f'Correlation Integral\nDimension: {corr_dim:.3f}')
     ax3.grid(True, alpha=0.3)
     
     # Plot box dimension
@@ -202,29 +195,20 @@ def main():
     ax4.loglog(box_sizes, box_counts, 'mo-', markersize=4, linewidth=1)
     ax4.set_xlabel('Box Size')
     ax4.set_ylabel('Number of Boxes')
-    ax4.set_title(f'Box Dimension\nDimension: {box_dim:.3f} ± {box_error:.3f}')
+    ax4.set_title(f'Box Dimension\nDimension: {box_dim:.3f}')
     ax4.grid(True, alpha=0.3)
-    
-    # Plot coarsening dimension (total perimeter vs resolution)
-    ax5 = axes[1, 2]
-    ax5.loglog(coarsening_factors, mean_total_perimeters, 'co-', markersize=4, linewidth=1)
-    ax5.set_xlabel('Resolution (coarsening factor)')
-    ax5.set_ylabel('Total Perimeter')
-    ax5.set_title(f'Coarsening Dimension\nDimension: {coarsening_dim:.3f} ± {coarsening_error:.3f}')
-    ax5.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
     plt.show()
     
     print("\n=== SUMMARY ===")
-    print(f"Area exponent: {area_exponent:.3f} ± {area_error:.3f}")
-    print(f"Perimeter exponent: {perim_exponent:.3f} ± {perim_error:.3f}")
-    print(f"Correlation dimension: {corr_dim:.3f} ± {corr_error:.3f}")
-    print(f"Box dimension: {box_dim:.3f} ± {box_error:.3f}")
-    print(f"Coarsening dimension: {coarsening_dim:.3f} ± {coarsening_error:.3f}")
+    print(f"Area exponent: {area_exponent:.3f}")
+    print(f"Perimeter exponent: {perim_exponent:.3f}")
+    print(f"Correlation dimension: {corr_dim:.3f}")
+    print(f"Box dimension: {box_dim:.3f}")
     print("Individual fractal dimensions:")
-    for i, (dim, error) in enumerate(individual_dims):
-        print(f"  Array {i+1}: {dim:.3f} ± {error:.3f}")
+    for i, dim in enumerate(individual_dims):
+        print(f"  Array {i+1}: {dim:.3f}")
     
     print("\n=== TEST COMPLETED ===")
 

@@ -73,7 +73,7 @@ def ensemble_correlation_dimension(
     bins: NDArray | int | None = None,
     point_reduction_factor: float = 1,
     nbins: int = 50
-) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
+) -> float | tuple[float, NDArray, NDArray]:
     """
     Calculate the correlation dimension D where C_l ∝ l^D for binary arrays.
 
@@ -111,7 +111,7 @@ def ensemble_correlation_dimension(
         https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html
         for the rationale.
     return_C_l : bool, default=False
-        If True, return dimension, error, bins, C_l. Otherwise, return dimension, error.
+        If True, return dimension, bins, C_l. Otherwise, return only dimension.
     bins : None, int, or array-like, optional
         Values of l to use for the regression. Can be:
         - None: automatically calculate as logarithmically spaced intervals between
@@ -129,13 +129,22 @@ def ensemble_correlation_dimension(
     -------
     dimension : float
         The correlation dimension.
-    error : float
-        Error estimate for the dimension (95% CI half-width).
     bins : np.ndarray, optional
         The bins used for calculation. Only returned if return_C_l=True.
     C_l : np.ndarray, optional
         The correlation integral values (= sandbox ``Z_{q=2}`` =
         ``sum_i M_i``). Only returned if return_C_l=True.
+
+    .. versionchanged:: 2.0.0
+        No longer returns an uncertainty estimate. The previously reported
+        error was ``2 x`` the OLS standard error of the log-log fit, which
+        assumes independent residuals; the points of a correlation integral
+        derived from a fractal/multifractal field are strongly correlated
+        across scales, so that error is badly miscalibrated (demonstrated by
+        bootstrap in the section "Statistical error and parameter uncertainty"
+        at https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html).
+        Users who need an uncertainty should bootstrap across statistically
+        independent images.
 
     Raises
     ------
@@ -163,22 +172,21 @@ def ensemble_correlation_dimension(
         point_reduction_factor=point_reduction_factor,
         return_values=return_C_l,
     )
-    # Preserve the pre-refactor failure-mode contract: when the fit
-    # returns nan, the historical `ensemble_correlation_dimension` emitted
-    # a warning and returned ``(nan, nan, [nan], [nan])`` from
-    # ``return_C_l=True``. The sandbox wrapper instead returns
-    # ``(nan, nan, full_bins, full_Z)``; rewrap here so that
-    # downstream code keyed to the old contract keeps working.
+    # Preserve the failure-mode contract: when the fit returns nan,
+    # `ensemble_correlation_dimension` emits a warning and returns
+    # ``(nan, [nan], [nan])`` from ``return_C_l=True``. The sandbox wrapper
+    # instead returns ``(nan, full_bins, full_Z)``; rewrap here so the
+    # degenerate case yields a clearly-nan bins/C_l pair.
     if return_C_l:
-        dimension, error, bins_used, Z = result
+        dimension, bins_used, Z = result
         if not np.isfinite(dimension):
             warn('Not enough data to estimate correlation dimension, returning nan')
-            return np.nan, np.nan, np.array([np.nan]), np.array([np.nan])
-        return dimension, error, bins_used, Z
-    dimension, error = result
+            return np.nan, np.array([np.nan]), np.array([np.nan])
+        return dimension, bins_used, Z
+    dimension = result
     if not np.isfinite(dimension):
         warn('Not enough data to estimate correlation dimension, returning nan')
-    return dimension, error
+    return dimension
 
 
 def individual_correlation_dimension(
@@ -192,7 +200,7 @@ def individual_correlation_dimension(
     point_reduction_factor: float = 1,
     nbins: int = 50,
     filled: bool = True,
-) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
+) -> float | tuple[float, NDArray, NDArray]:
     """
     Calculate the correlation dimension of the Nth largest structure in an array.
 
@@ -219,8 +227,7 @@ def individual_correlation_dimension(
         ``0.33 * max(bbox_height, bbox_width)`` of the isolated structure in
         physical units.
     return_C_l : bool, default=False
-        If True, return dimension, error, bins, C_l. Otherwise, return dimension,
-        error.
+        If True, return dimension, bins, C_l. Otherwise, return only dimension.
     filled : bool, default=True
         If True, fill interior holes in the isolated structure before computing
         the correlation dimension, so that only the outer boundary contributes.
@@ -235,12 +242,20 @@ def individual_correlation_dimension(
     -------
     dimension : float
         The correlation dimension.
-    error : float
-        Error estimate for the dimension (95% confidence interval).
     bins : np.ndarray, optional
         The bins used for calculation. Only returned if return_C_l=True.
     C_l : np.ndarray, optional
         The correlation integral values. Only returned if return_C_l=True.
+
+    .. versionchanged:: 2.0.0
+        No longer returns an uncertainty estimate. The previously reported
+        error was ``2 x`` the OLS standard error of the log-log fit, which
+        assumes independent residuals that do not hold for a correlation
+        integral of a fractal set (demonstrated by bootstrap in the section
+        "Statistical error and parameter uncertainty" at
+        https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html).
+        Users who need an uncertainty should bootstrap across statistically
+        independent images.
 
     Raises
     ------
@@ -536,8 +551,6 @@ def ensemble_box_renyi_dimension(
     D_q : float or np.ndarray
         Estimated Rényi dimension. Scalar if ``q`` was scalar, array
         otherwise.
-    err : float or np.ndarray
-        95% CI half-width for the estimate(s).
     box_sizes : np.ndarray, optional
         The box sizes used. Returned only if ``return_values=True``.
     partition : np.ndarray, optional
@@ -547,6 +560,17 @@ def ensemble_box_renyi_dimension(
         ``S_1(eps)`` for ``q == 1``. Shape ``(len(q), len(box_sizes))`` if
         ``q`` is array, ``(len(box_sizes),)`` if scalar. Returned only if
         ``return_values=True``.
+
+    .. versionchanged:: 2.0.0
+        No longer returns an uncertainty estimate. The previously reported
+        error was ``2 x`` the OLS standard error of the log-log fit, which
+        assumes independent residuals; the points of the partition function of
+        a fractal/multifractal set are strongly correlated across scales, so
+        that error is badly miscalibrated (demonstrated by bootstrap in the
+        section "Statistical error and parameter uncertainty" at
+        https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html).
+        Users who need an uncertainty should bootstrap across statistically
+        independent images.
 
     Notes
     -----
@@ -645,22 +669,20 @@ def ensemble_box_renyi_dimension(
         else:  # 'edge'
             set_arrays.append(_one_sided_edge_mask(np.asarray(arr) > 0))
 
-    D_q, err, partition = _box_renyi_from_set(
+    D_q, _err, partition = _box_renyi_from_set(
         set_arrays, q_arr, box_sizes_arr, box_origin_shift
     )
 
     if q_scalar:
         D_q_out = float(D_q[0])
-        err_out = float(err[0])
         partition_out = partition[0]
     else:
         D_q_out = D_q
-        err_out = err
         partition_out = partition
 
     if return_values:
-        return D_q_out, err_out, box_sizes_arr, partition_out
-    return D_q_out, err_out
+        return D_q_out, box_sizes_arr, partition_out
+    return D_q_out
 
 
 def ensemble_box_dimension(
@@ -670,7 +692,7 @@ def ensemble_box_dimension(
     min_box_size: int = 8,
     box_sizes: str | NDArray = 'default',
     return_values: bool = False
-) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
+) -> float | tuple[float, NDArray, NDArray]:
     """
     Calculate the ensemble box-counting dimension of binary arrays.
 
@@ -702,13 +724,21 @@ def ensemble_box_dimension(
     -------
     dimension : float
         The estimated box-counting dimension.
-    error : float
-        The error of the estimate.
     box_sizes : np.ndarray, optional
         Box sizes used. Only returned if return_values=True.
     number_boxes : np.ndarray, optional
         Number of nonempty boxes (pooled across the input ensemble) at each
         box size. Only returned if return_values=True.
+
+    .. versionchanged:: 2.0.0
+        No longer returns an uncertainty estimate. The previously reported
+        error was ``2 x`` the OLS standard error of the log-log fit, whose
+        independent-residual assumption fails for the box counts of a
+        fractal/multifractal set (demonstrated by bootstrap in the section
+        "Statistical error and parameter uncertainty" at
+        https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html).
+        Users who need an uncertainty should bootstrap across statistically
+        independent images.
 
     Raises
     ------
@@ -733,7 +763,7 @@ def ensemble_information_dimension(
     set: str = 'edge',
     return_values: bool = False,
     **kwargs,
-) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
+) -> float | tuple[float, NDArray, NDArray]:
     """
     Calculate the ensemble information dimension D_1 of binary arrays.
 
@@ -789,8 +819,6 @@ def ensemble_information_dimension(
     -------
     dimension : float
         The estimated information dimension.
-    error : float
-        The 95% CI half-width.
     bins : np.ndarray, optional
         Distance bins (sandbox) or box sizes (box). Only returned if
         ``return_values=True``.
@@ -798,6 +826,16 @@ def ensemble_information_dimension(
         Partition function values: ``\\langle log10 M(r)\\rangle``
         (sandbox) or Shannon entropy ``S_1(eps)`` (box). Only returned if
         ``return_values=True``.
+
+    .. versionchanged:: 2.0.0
+        No longer returns an uncertainty estimate. The previously reported
+        error was ``2 x`` the OLS standard error of the log-log fit, whose
+        independent-residual assumption fails for a fractal/multifractal set
+        (demonstrated by bootstrap in the section "Statistical error and
+        parameter uncertainty" at
+        https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html).
+        Users who need an uncertainty should bootstrap across statistically
+        independent images.
 
     See Also
     --------
@@ -913,7 +951,7 @@ def ensemble_sandbox_renyi_dimension(
     point_reduction_factor : float, default=1
         Subsample sandbox centers by this factor (must be ``>= 1``).
     return_values : bool, default=False
-        If True, return ``(D_q, err, bins, Z)`` instead of ``(D_q, err)``.
+        If True, return ``(D_q, bins, Z)`` instead of just ``D_q``.
         For scalar ``q``, ``Z`` has shape ``(B,)``. For vector ``q``, ``Z``
         has shape ``(len(q), B)``. At the ``q=1`` index, ``Z`` holds the
         per-center mean ``\\langle log10 M_i\\rangle`` (already normalized).
@@ -922,12 +960,22 @@ def ensemble_sandbox_renyi_dimension(
     -------
     D_q : float or np.ndarray
         Rényi dimension estimate(s). Scalar if ``q`` is scalar.
-    err : float or np.ndarray
-        95% CI half-width.
     bins : np.ndarray, optional
         Distance bins used. Returned only if ``return_values=True``.
     Z : np.ndarray, optional
-        Sandbox partition function values.
+        Sandbox partition function values. Returned only if
+        ``return_values=True``.
+
+    .. versionchanged:: 2.0.0
+        No longer returns an uncertainty estimate. The previously reported
+        error was ``2 x`` the OLS standard error of the log-log fit, which
+        assumes independent residuals; the points of the sandbox partition
+        function of a fractal/multifractal set are strongly correlated across
+        scales, so that error is badly miscalibrated (demonstrated by bootstrap
+        in the section "Statistical error and parameter uncertainty" at
+        https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html).
+        Users who need an uncertainty should bootstrap across statistically
+        independent images.
 
     See Also
     --------
@@ -1110,7 +1158,6 @@ def ensemble_sandbox_renyi_dimension(
     # ----- linear regression per q -----
     log_r = np.log10(bins)
     D_q = np.full(Q, np.nan, dtype=np.float64)
-    err_arr = np.full(Q, np.nan, dtype=np.float64)
     for qi in range(Q):
         y = Z_total[qi].copy()
         q_val = float(q_arr[qi])
@@ -1121,89 +1168,25 @@ def ensemble_sandbox_renyi_dimension(
             y_fit = np.full_like(y, np.nan)
             pos = y > 0
             y_fit[pos] = np.log10(y[pos])
-        (slope, _), (slope_err, _) = linear_regression(log_r, y_fit)
+        (slope, _), _ = linear_regression(log_r, y_fit)
         if not np.isfinite(slope):
             continue
         if is_q1[qi]:
             D_q[qi] = slope
-            err_arr[qi] = slope_err
         else:
             D_q[qi] = slope / (q_val - 1.0)
-            err_arr[qi] = slope_err / abs(q_val - 1.0)
 
     # Unbox return shape
     if q_scalar:
         D_out = float(D_q[0])
-        err_out = float(err_arr[0])
         Z_out = Z_total[0]
     else:
         D_out = D_q
-        err_out = err_arr
         Z_out = Z_total
 
     if return_values:
-        return D_out, err_out, bins, Z_out
-    return D_out, err_out
-
-
-def ensemble_coarsening_dimension(
-    arrays: NDArray | list[NDArray],
-    x_sizes: NDArray | list[NDArray] | None = None,
-    y_sizes: NDArray | list[NDArray] | None = None,
-    cloudy_threshold: float = 0.5,
-    min_pixels: int = 30,
-    return_values: bool = False,
-    coarsening_factors: str | NDArray = 'default',
-    count_exterior: bool = False
-) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
-    """
-    NOT RECOMMENDED due to ambiguity in coarsening a binary array
-
-    Calculate the ensemble fractal dimension by coarsening image resolution and 
-    calculating total perimeter as a function of resolution.
-
-    Parameters
-    ----------
-    arrays : np.ndarray or list of np.ndarray
-        Array, or list of arrays, to coarsen, apply cloudy_threshold to make binary,
-        then calculate total perimeter.
-    x_sizes : np.ndarray or list, optional
-        Pixel sizes in the x direction. If None, assume all pixel dimensions are 1.
-        If np.ndarray, use these for each array in 'arrays'. If list, assume
-        x_sizes[i] corresponds to arrays[i].
-    y_sizes : np.ndarray or list, optional
-        Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
-        If np.ndarray, use these for each array in 'arrays'. If list, assume
-        y_sizes[i] corresponds to arrays[i].
-    cloudy_threshold : float, default=0.5
-        Threshold for making arrays binary.
-    min_pixels : int, default=30
-        Limit the coarsening factors such that coarsened matrices always have
-        shape >= (min_pixels, min_pixels).
-    return_values : bool, default=False
-        If True, return additional data used in the calculation.
-    coarsening_factors : str or array-like, default='default'
-        Coarsening factors to use. If 'default', automatically determined.
-    count_exterior : bool, default=False
-        Whether to count exterior perimeter.
-
-    Returns
-    -------
-    D_e : float
-        The ensemble fractal dimension.
-    error : float
-        Error estimate (95% confidence).
-    coarsening_factors : np.ndarray, optional
-        The coarsening factors used. Only returned if return_values=True.
-    mean_total_perimeters : np.ndarray, optional
-        Mean total perimeters. Only returned if return_values=True.
-    """
-    raise NotImplementedError(
-        "ensemble_coarsening_dimension has been removed due to ambiguity in "
-        "coarsening binary arrays. Use ensemble_correlation_dimension (q=2), "
-        "ensemble_sandbox_renyi_dimension (general q), or "
-        "ensemble_box_dimension (q=0) instead."
-    )
+        return D_out, bins, Z_out
+    return D_out
 
 
 _UNSET = object()
@@ -1230,7 +1213,7 @@ def individual_fractal_dimension(
     filled: bool = _UNSET,
     min_a: float = _UNSET,
     max_a: float = _UNSET,
-) -> tuple[float, float] | tuple[float, float, NDArray, NDArray]:
+) -> float | tuple[float, NDArray, NDArray]:
     """
     Calculate the individual fractal dimension Df of objects within arrays.
 
@@ -1291,14 +1274,23 @@ def individual_fractal_dimension(
     -------
     Df : float
         The individual fractal dimension.
-    uncertainty : float
-        Uncertainty estimate (95% confidence).
     log10_length_scale : np.ndarray, optional
         Log10 of the length-scale values (bin centers if bins is not None).
         Only returned if return_values=True.
     log10_p : np.ndarray, optional
         Log10 of perimeter values (bin means if bins is not None).
         Only returned if return_values=True.
+
+    .. versionchanged:: 2.0.0
+        No longer returns an uncertainty estimate. The previously reported
+        uncertainty was ``2 x`` the OLS standard error of the log-log fit,
+        which assumes independent residuals; the per-object points of a
+        perimeter-vs-length-scale relation for a fractal ensemble are
+        correlated, so that uncertainty is badly miscalibrated (demonstrated by
+        bootstrap in the section "Statistical error and parameter uncertainty"
+        at https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html).
+        Users who need an uncertainty should bootstrap across statistically
+        independent images.
 
     Raises
     ------
@@ -1421,12 +1413,12 @@ def individual_fractal_dimension(
         log_ls = bin_centers[valid]
         log_p = bin_means[valid]
 
-    (slope, _), (err, _) = linear_regression(log_ls, log_p)
+    (slope, _), _ = linear_regression(log_ls, log_p)
 
     if return_values:
-        return slope, err, log_ls, log_p
+        return slope, log_ls, log_p
     else:
-        return slope, err
+        return slope
 
 
 # Helper functions for fractal dimension calculations

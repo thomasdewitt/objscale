@@ -161,7 +161,7 @@ def test_ensemble_box_dimension(seed='3x3_center', iterations=None, tolerance=0.
     expected_D = expected_ensemble_dimension(seed)
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
-    dim, error = objscale.ensemble_box_dimension(
+    dim = objscale.ensemble_box_dimension(
         [fractal], min_box_size=10, max_box_size=64
     )
 
@@ -189,7 +189,7 @@ def test_ensemble_correlation_dimension(seed='3x3_center', iterations=None, tole
     expected_D = expected_ensemble_dimension(seed)
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
-    dim, error = objscale.ensemble_correlation_dimension(
+    dim = objscale.ensemble_correlation_dimension(
         [fractal], point_reduction_factor=500,
         minlength=10, maxlength=300, interior_circles_only=True
     )
@@ -243,7 +243,7 @@ def test_ensemble_correlation_dimension_nonuniform(seed='3x3_center', iterations
         x_sizes = np.full(stretched.shape, dx, dtype=np.float64)
         y_sizes = np.full(stretched.shape, dy, dtype=np.float64)
 
-        dim, error = objscale.ensemble_correlation_dimension(
+        dim = objscale.ensemble_correlation_dimension(
             [stretched], x_sizes=x_sizes, y_sizes=y_sizes,
             point_reduction_factor=500,
             minlength=10, maxlength=300, interior_circles_only=True
@@ -269,7 +269,7 @@ def test_ensemble_correlation_dimension_nonuniform(seed='3x3_center', iterations
     x_sizes[:, left.shape[1]:] = 0.5
     y_sizes = np.ones(stretched.shape, dtype=np.float64)
 
-    dim, error = objscale.ensemble_correlation_dimension(
+    dim = objscale.ensemble_correlation_dimension(
         [stretched], x_sizes=x_sizes, y_sizes=y_sizes,
         point_reduction_factor=500,
         minlength=10, maxlength=300, interior_circles_only=True
@@ -292,7 +292,7 @@ def test_ensemble_correlation_dimension_nonuniform(seed='3x3_center', iterations
     y_sizes = np.ones(stretched.shape, dtype=np.float64)
     y_sizes[top.shape[0]:, :] = 0.5
 
-    dim, error = objscale.ensemble_correlation_dimension(
+    dim = objscale.ensemble_correlation_dimension(
         [stretched], x_sizes=x_sizes, y_sizes=y_sizes,
         point_reduction_factor=500,
         minlength=10, maxlength=300, interior_circles_only=True
@@ -337,7 +337,7 @@ def test_ensemble_correlation_dimension_nonuniform_integer_repeats(
     random_state = np.random.get_state()
     np.random.seed(0)
     try:
-        dim, error = objscale.ensemble_correlation_dimension(
+        dim = objscale.ensemble_correlation_dimension(
             [stretched], x_sizes=x_sizes, y_sizes=y_sizes,
             point_reduction_factor=500,
             minlength=10, maxlength=300, interior_circles_only=True
@@ -382,7 +382,7 @@ def test_size_distribution(seed='3x3_center', iterations=None, tolerance=0.001):
 
     results = {}
     for metric, expected_beta in metrics.items():
-        exponent, error = objscale.finite_array_powerlaw_exponent(
+        exponent = objscale.finite_array_powerlaw_exponent(
             [fractal], metric, bins=10000, min_threshold=10, min_count_threshold=1
         )
 
@@ -413,7 +413,7 @@ def test_individual_fractal_dimension(seed='3x3_center', iterations=None, tolera
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
     # Test unbinned
-    dim, error = objscale.individual_fractal_dimension([fractal], bins=None)
+    dim = objscale.individual_fractal_dimension([fractal], bins=None)
 
     diff = abs(dim - expected_D)
     passed = diff < tolerance
@@ -423,7 +423,7 @@ def test_individual_fractal_dimension(seed='3x3_center', iterations=None, tolera
     assert passed, f"Individual dimension (unbinned) {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
 
     # Test binned (default bins=30, but use 1000 for discrete-size fractals)
-    dim_b, error_b = objscale.individual_fractal_dimension([fractal], bins=1000)
+    dim_b = objscale.individual_fractal_dimension([fractal], bins=1000)
 
     diff_b = abs(dim_b - expected_D)
     passed_b = diff_b < tolerance
@@ -467,7 +467,7 @@ def test_individual_fractal_dimension_nan_surrounded(tolerance=0.01):
     expected_D = 1.0
 
     # Unbinned
-    dim, error = objscale.individual_fractal_dimension([arr], min_length_scale=1, bins=None)
+    dim = objscale.individual_fractal_dimension([arr], min_length_scale=1, bins=None)
 
     diff = abs(dim - expected_D)
     passed = diff < tolerance
@@ -480,7 +480,7 @@ def test_individual_fractal_dimension_nan_surrounded(tolerance=0.01):
     )
 
     # Binned
-    dim_b, error_b = objscale.individual_fractal_dimension([arr], min_length_scale=1, bins=1000)
+    dim_b = objscale.individual_fractal_dimension([arr], min_length_scale=1, bins=1000)
 
     diff_b = abs(dim_b - expected_D)
     passed_b = diff_b < tolerance
@@ -501,7 +501,7 @@ def test_ensemble_box_renyi_dimension_q0(seed='3x3_center', iterations=None, tol
     expected_D = expected_ensemble_dimension(seed)
     fractal = generate_fractal(seed=seed, iterations=iterations)
 
-    dim, error = objscale.ensemble_box_renyi_dimension(
+    dim = objscale.ensemble_box_renyi_dimension(
         [fractal], q=0.0, min_box_size=10, max_box_size=64
     )
 
@@ -512,7 +512,7 @@ def test_ensemble_box_renyi_dimension_q0(seed='3x3_center', iterations=None, tol
     assert passed, f"Renyi q=0 dimension {dim:.4f} differs from expected {expected_D:.4f} by more than {tolerance}"
 
     # Consistency: must equal the standalone ensemble_box_dimension wrapper exactly.
-    box_d, _ = objscale.ensemble_box_dimension(
+    box_d = objscale.ensemble_box_dimension(
         [fractal], min_box_size=10, max_box_size=64
     )
     assert abs(dim - box_d) < 1e-10, (
@@ -537,7 +537,7 @@ def test_ensemble_box_renyi_dimension_all_ones_analytic():
     # Single array
     arr = np.ones((128, 128), dtype=np.float64)
     for q in [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]:
-        D, _ = objscale.ensemble_box_renyi_dimension(
+        D = objscale.ensemble_box_renyi_dimension(
             [arr], q=q, set='ones',
             box_sizes=[2, 4, 8, 16, 32, 64], min_box_size=2,
         )
@@ -550,7 +550,7 @@ def test_ensemble_box_renyi_dimension_all_ones_analytic():
     a = np.ones((64, 64), dtype=np.float64)
     b = np.ones((16, 16), dtype=np.float64)
     for q in [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]:
-        D, _ = objscale.ensemble_box_renyi_dimension(
+        D = objscale.ensemble_box_renyi_dimension(
             [a, b], q=q, set='ones',
             box_sizes=[2, 4, 8, 16], min_box_size=2,
         )
@@ -561,7 +561,7 @@ def test_ensemble_box_renyi_dimension_all_ones_analytic():
 
     # Vector q on mixed-size ensemble
     qs = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 3.0])
-    D_vec, _ = objscale.ensemble_box_renyi_dimension(
+    D_vec = objscale.ensemble_box_renyi_dimension(
         [a, b], q=qs, set='ones',
         box_sizes=[2, 4, 8, 16], min_box_size=2,
     )
@@ -610,7 +610,7 @@ def test_ensemble_box_renyi_dimension_fbm_monofractal(tolerance=0.15):
     arr = _synthetic_fbm_level_set(size=512, H=H, seed=0)
 
     qs = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
-    D_arr, err_arr = objscale.ensemble_box_renyi_dimension(
+    D_arr = objscale.ensemble_box_renyi_dimension(
         [arr], q=qs, min_box_size=4, max_box_size=64
     )
 
@@ -624,7 +624,7 @@ def test_ensemble_box_renyi_dimension_fbm_monofractal(tolerance=0.15):
         )
 
     # Consistency: q=0 entry must equal the standalone ensemble_box_dimension wrapper.
-    box_d, _ = objscale.ensemble_box_dimension(
+    box_d = objscale.ensemble_box_dimension(
         [arr], min_box_size=4, max_box_size=64
     )
     assert abs(D_arr[0] - box_d) < 1e-10, (
@@ -634,7 +634,7 @@ def test_ensemble_box_renyi_dimension_fbm_monofractal(tolerance=0.15):
     # Consistency: q=1 entry must equal ensemble_information_dimension(method='box').
     # (The default method is now 'sandbox', which uses a different estimator;
     # we check the box wrapper here because that's what we're consistency-checking.)
-    info_d, _ = objscale.ensemble_information_dimension(
+    info_d = objscale.ensemble_information_dimension(
         [arr], method='box', min_box_size=4, max_box_size=64
     )
     assert abs(D_arr[2] - info_d) < 1e-10, (
@@ -655,7 +655,7 @@ def test_ensemble_sandbox_renyi_dimension_analytic_oracle():
     """
     arr = np.ones((128, 128), dtype=np.float64)
     qs = np.array([0.5, 1.0, 1.5, 2.0, 2.5])
-    D, err = objscale.ensemble_sandbox_renyi_dimension(
+    D = objscale.ensemble_sandbox_renyi_dimension(
         [arr], q=qs, set='ones',
         minlength=2, maxlength=40, nbins=20,
         interior_circles_only=True,
@@ -670,7 +670,7 @@ def test_ensemble_sandbox_renyi_dimension_analytic_oracle():
         )
 
     # Scalar q convention
-    D_sc, _ = objscale.ensemble_sandbox_renyi_dimension(
+    D_sc = objscale.ensemble_sandbox_renyi_dimension(
         arr, q=2.0, set='ones',
         minlength=2, maxlength=40, nbins=20,
         interior_circles_only=True,
@@ -692,7 +692,7 @@ def test_ensemble_sandbox_renyi_dimension_fbm_monofractal(tolerance=0.15):
     arr = _synthetic_fbm_level_set(size=256, H=H, seed=0)
 
     qs = np.array([0.5, 1.0, 1.5, 2.0, 2.5])
-    D_arr, err_arr = objscale.ensemble_sandbox_renyi_dimension(
+    D_arr = objscale.ensemble_sandbox_renyi_dimension(
         [arr], q=qs, set='edge',
         minlength=2, maxlength=80, nbins=25,
     )
@@ -717,12 +717,12 @@ def test_sandbox_gp_equivalence_at_q2():
     """
     arr = _synthetic_fbm_level_set(size=256, H=0.3, seed=0)
 
-    D_sandbox, err_sandbox, bins_sandbox, Z_sandbox = objscale.ensemble_sandbox_renyi_dimension(
+    D_sandbox, bins_sandbox, Z_sandbox = objscale.ensemble_sandbox_renyi_dimension(
         [arr], q=2.0, set='edge',
         minlength=2, maxlength=80, nbins=25,
         point_reduction_factor=1, return_values=True,
     )
-    D_gp, err_gp, bins_gp, Cl_gp = objscale.ensemble_correlation_dimension(
+    D_gp, bins_gp, Cl_gp = objscale.ensemble_correlation_dimension(
         [arr],
         minlength=2, maxlength=80, nbins=25,
         point_reduction_factor=1, return_C_l=True,
@@ -745,7 +745,7 @@ def test_sandbox_duplicate_q1():
     replaces the single q1_index with a per-element mask.
     """
     arr = _synthetic_fbm_level_set(size=256, H=0.3, seed=0)
-    D, err = objscale.ensemble_sandbox_renyi_dimension(
+    D = objscale.ensemble_sandbox_renyi_dimension(
         [arr], q=np.array([0.5, 1.0, 1.0, 2.0]), set='edge',
         minlength=2, maxlength=80, nbins=25,
     )
@@ -768,13 +768,13 @@ def test_information_dimension_method_parameter():
     arr = _synthetic_fbm_level_set(size=256, H=0.3, seed=0)
     expected_D = 1.7
 
-    D_default, _ = objscale.ensemble_information_dimension(
+    D_default = objscale.ensemble_information_dimension(
         [arr], minlength=2, maxlength=80, nbins=25,
     )
-    D_sandbox, _ = objscale.ensemble_information_dimension(
+    D_sandbox = objscale.ensemble_information_dimension(
         [arr], method='sandbox', minlength=2, maxlength=80, nbins=25,
     )
-    D_box, _ = objscale.ensemble_information_dimension(
+    D_box = objscale.ensemble_information_dimension(
         [arr], method='box', min_box_size=4, max_box_size=64,
     )
 
@@ -816,7 +816,7 @@ def test_individual_correlation_dimension(tolerance=0.05):
     arr[2, 2:-2] = 1  # single row of pixels
 
     expected_D = 1.0
-    dim, error = objscale.individual_correlation_dimension(arr, n=1)
+    dim = objscale.individual_correlation_dimension(arr, n=1)
 
     diff = abs(dim - expected_D)
     passed = diff < tolerance
@@ -873,7 +873,7 @@ def test_individual_fractal_dimension_methods(seed='3x3_center', iterations=None
     ]
 
     for method in methods:
-        dim, error = objscale.individual_fractal_dimension(
+        dim = objscale.individual_fractal_dimension(
             [fractal], bins=None, method=method
         )
         diff = abs(dim - expected_D)
@@ -896,7 +896,7 @@ def test_individual_fractal_dimension_deprecations():
     # filled=True should still work but warn
     with _warnings.catch_warnings(record=True) as w:
         _warnings.simplefilter("always")
-        dim, _ = objscale.individual_fractal_dimension([fractal], filled=True, bins=None)
+        dim = objscale.individual_fractal_dimension([fractal], filled=True, bins=None)
         dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(dep_warns) >= 1, "filled=True should emit DeprecationWarning"
     assert abs(dim - 1.0) < 0.01
@@ -905,7 +905,7 @@ def test_individual_fractal_dimension_deprecations():
     # min_a should still work but warn
     with _warnings.catch_warnings(record=True) as w:
         _warnings.simplefilter("always")
-        dim, _ = objscale.individual_fractal_dimension([fractal], min_a=10, bins=None)
+        dim = objscale.individual_fractal_dimension([fractal], min_a=10, bins=None)
         dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(dep_warns) >= 1, "min_a should emit DeprecationWarning"
     print("  individual_fractal_dimension min_a deprecation: PASS")
@@ -947,7 +947,7 @@ def test_perimeter_variable_deprecation():
     # 'perimeter' should warn
     with _warnings.catch_warnings(record=True) as w:
         _warnings.simplefilter("always")
-        exp_old, err_old = objscale.finite_array_powerlaw_exponent(
+        exp_old = objscale.finite_array_powerlaw_exponent(
             [fractal], 'perimeter', bins=10000, min_threshold=10, min_count_threshold=1
         )
         dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]
@@ -956,7 +956,7 @@ def test_perimeter_variable_deprecation():
     # 'summed perimeter' should not warn
     with _warnings.catch_warnings(record=True) as w:
         _warnings.simplefilter("always")
-        exp_new, err_new = objscale.finite_array_powerlaw_exponent(
+        exp_new = objscale.finite_array_powerlaw_exponent(
             [fractal], 'summed perimeter', bins=10000, min_threshold=10, min_count_threshold=1
         )
         dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]

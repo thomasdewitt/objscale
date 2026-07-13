@@ -50,6 +50,23 @@ def linear_regression(
     errors : tuple of float
         (error_slope, error_y_intercept) for 95% confidence.
 
+    Warning
+    -------
+    The returned errors are ``2 x`` the OLS standard error of the fit, which
+    assumes the residuals of the ``(x, y)`` data points are statistically
+    independent. This assumption does **not** hold for scaling functions
+    computed from a fractal/multifractal field: the points of such a scaling
+    function are strongly correlated across scales, so these errors are badly
+    miscalibrated and must **not** be reported as the uncertainty of an
+    exponent or dimension estimated from a single field. The only viable way
+    to get a trustworthy uncertainty in that case is to bootstrap the estimate
+    across statistically independent images. This miscalibration is the reason
+    the public exponent/dimension estimators in :mod:`objscale` stopped
+    returning an uncertainty in v2.0.0; see the section "Statistical error and
+    parameter uncertainty" at
+    https://thomasddewitt.com/thought-cloud/too-many-exponents/index.html
+    for a bootstrap demonstration.
+
     Raises
     ------
     TypeError

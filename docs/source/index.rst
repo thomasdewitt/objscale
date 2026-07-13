@@ -32,16 +32,16 @@ Quick Example
    arrays = [(np.random.random((1000, 1000)) < 0.3).astype(int) for _ in range(4)]
 
    # Size distribution with finite domain corrections
-   (exponent, error), (log10_sizes, log10_counts) = objscale.finite_array_powerlaw_exponent(
+   exponent, (log10_sizes, log10_counts) = objscale.finite_array_powerlaw_exponent(
        arrays, 'area', return_counts=True
    )
 
    # Ensemble fractal dimensions
-   corr_dim, corr_error = objscale.ensemble_correlation_dimension(arrays)
-   box_dim, box_error = objscale.ensemble_box_dimension(arrays)
+   corr_dim = objscale.ensemble_correlation_dimension(arrays)
+   box_dim = objscale.ensemble_box_dimension(arrays)
 
-   # Individual object analysis  
-   ind_dim, ind_error = objscale.individual_fractal_dimension(arrays)
+   # Individual object analysis
+   ind_dim = objscale.individual_fractal_dimension(arrays)
 
 Features
 --------
