@@ -91,7 +91,7 @@ __all__ = [
     'install_agent_skill',
 ]
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __author__ = "Thomas DeWitt"
 __email__ = "thomas.dewitt@utah.edu"
 __description__ = "Object-based analysis functions for fractal dimensions and size distributions"

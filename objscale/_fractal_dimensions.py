@@ -16,7 +16,7 @@ from ._object_analysis import (
     get_structure_perimeters,
     get_structure_height_width,
 )
-from ._utils import linear_regression, encase_in_value
+from ._utils import linear_regression, encase_in_value, validate_pixel_sizes
 
 __all__ = [
     'ensemble_correlation_dimension',
@@ -986,6 +986,17 @@ def ensemble_sandbox_renyi_dimension(
     if len(binary_arrays) == 0:
         raise ValueError('binary_arrays must be non-empty')
 
+    # The sandbox pools set points into one partition function over a single
+    # physical grid, so every array must share a shape. Fail loudly and early
+    # rather than silently misaligning (differently-shaped domains can only be
+    # pooled through the size-distribution functions, which support it).
+    shapes = {arr.shape for arr in binary_arrays}
+    if len(shapes) > 1:
+        raise ValueError(
+            f'ensemble sandbox/correlation dimension requires all arrays to '
+            f'have the same shape; got {sorted(shapes)}.'
+        )
+
     if set not in ('edge', 'ones'):
         raise ValueError(f"set={set!r} not supported (use 'edge' or 'ones')")
 
@@ -1233,13 +1244,14 @@ def individual_fractal_dimension(
     arrays : list of np.ndarray
         List of boolean 2D arrays.
     x_sizes : np.ndarray or list, optional
-        Pixel sizes in the x direction. If None, assume all pixel dimensions are 1.
-        If np.ndarray, use these for each array in 'arrays'. If list, assume
-        x_sizes[i] corresponds to arrays[i].
+        Pixel sizes in the x direction. ``None`` (default) assumes unit pixels,
+        in which case the ``arrays`` may have differing shapes (objects are
+        pooled per-structure). A single ``np.ndarray`` is applied to every array
+        and requires every array to share its shape; a list must give one
+        shape-matching grid per array. Shape-contract violations raise
+        ``ValueError``.
     y_sizes : np.ndarray or list, optional
-        Pixel sizes in the y direction. If None, assume all pixel dimensions are 1.
-        If np.ndarray, use these for each array in 'arrays'. If list, assume
-        y_sizes[i] corresponds to arrays[i].
+        Pixel sizes in the y direction. Same contract as ``x_sizes``.
     min_length_scale : float, default=3
         Minimum length scale to include. Filters on the x-axis quantity:
         sqrt(area) for area methods, width or height for those methods.
@@ -1362,24 +1374,25 @@ def individual_fractal_dimension(
     if not isinstance(arrays, list):
         arrays = [arrays]
 
-    if x_sizes is None:
-        x_sizes = np.ones_like(arrays[0])
-    if y_sizes is None:
-        y_sizes = np.ones_like(arrays[0])
+    # x_sizes/y_sizes contract: None (unit pixels, shapes may differ), a single
+    # grid (every array must share its shape), or a per-array list. Objects are
+    # pooled per-structure, so arrays of differing shapes are valid with None.
+    validate_pixel_sizes(arrays, x_sizes, y_sizes)
 
     for i in range(len(arrays)):
         array = arrays[i]
         if isinstance(x_sizes, list):
             xs = x_sizes[i]
+        elif x_sizes is None:
+            xs = np.ones_like(array)
         else:
             xs = x_sizes
         if isinstance(y_sizes, list):
             ys = y_sizes[i]
+        elif y_sizes is None:
+            ys = np.ones_like(array)
         else:
             ys = y_sizes
-
-        if np.any(array.shape != xs.shape):
-            raise ValueError('Each array shape must match corresponding pixel sizes shape')
 
         array = remove_structures_touching_border_nan(array)
         if fill_holes:

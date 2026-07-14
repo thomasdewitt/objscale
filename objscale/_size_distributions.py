@@ -16,7 +16,7 @@ from ._object_analysis import (
     get_structure_height_width,
     get_every_boundary_perimeter,
 )
-from ._utils import linear_regression, encase_in_value
+from ._utils import linear_regression, encase_in_value, validate_pixel_sizes
 
 __all__ = [
     'finite_array_size_distribution',
@@ -29,6 +29,20 @@ __all__ = [
 # individual_fractal_dimension in _fractal_dimensions.py. Lets us distinguish
 # "user passed min_threshold" from "use the variable-aware default".
 _UNSET = object()
+
+
+def _unit_grids_if_none(x_sizes, y_sizes, shape):
+    """Return (x_sizes, y_sizes), substituting unit grids of ``shape`` for None.
+
+    Used by branches whose backend (perimeter / height-width / boundary
+    perimeter) needs a concrete pixel-size grid, unlike the area branch which
+    accepts None directly as unit weights.
+    """
+    if x_sizes is None:
+        x_sizes = np.ones(shape, dtype=np.float32)
+    if y_sizes is None:
+        y_sizes = np.ones(shape, dtype=np.float32)
+    return x_sizes, y_sizes
 
 
 def _normalize_variable(variable, stacklevel=3):
@@ -73,17 +87,22 @@ def _variable_bin_bounds(variable, xs, ys):
     return float(lower), float(upper)
 
 
-def _auto_bin_range(variable, x_sizes, y_sizes, n_arrays):
+def _auto_bin_range(variable, x_sizes, y_sizes, arrays):
     """Variable-aware auto-bin (lower, upper) across possibly-many grids.
 
     When ``x_sizes``/``y_sizes`` are lists of per-array grids, the lower bound
     is the min of per-array lower bounds and the upper bound is the max of
     per-array upper bounds, so no array's objects fall outside the range.
+    ``None`` grids are treated as unit pixels sized to each array's own shape.
     """
     lowers, uppers = [], []
-    for i in range(n_arrays):
+    for i in range(len(arrays)):
         xs = x_sizes[i] if isinstance(x_sizes, list) else x_sizes
         ys = y_sizes[i] if isinstance(y_sizes, list) else y_sizes
+        if xs is None:
+            xs = np.ones(arrays[i].shape, dtype=np.float32)
+        if ys is None:
+            ys = np.ones(arrays[i].shape, dtype=np.float32)
         lo, hi = _variable_bin_bounds(variable, xs, ys)
         lowers.append(lo)
         uppers.append(hi)
@@ -164,6 +183,16 @@ def finite_array_size_distribution(
     truncation_index : int
         Index where truncated objects begin to dominate.
 
+    .. versionchanged:: 2.1.0
+        Arrays of differing shapes may now be pooled in one call (object counts
+        are summed across arrays regardless of shape). ``x_sizes``/``y_sizes``
+        follow an explicit contract: ``None`` means unit pixels (no shared grid,
+        so shapes may differ), a single grid requires every array to share its
+        shape, and a list must give one shape-matching grid per array. Contract
+        violations raise ``ValueError`` instead of silently misaligning an
+        internal pixel-area index (which previously produced wrong results when
+        arrays of equal size but different shape were passed).
+
     .. versionchanged:: 2.0.0
         When ``bins`` is an int, the auto-bin range is now variable-aware and
         NaN-aware (see ``bins``): length-unit variables (width/height/summed
@@ -190,15 +219,15 @@ def finite_array_size_distribution(
     variable = _normalize_variable(variable)
     if isinstance(arrays, np.ndarray):
         arrays = [arrays]
-    if x_sizes is None:
-        x_sizes = np.ones(arrays[0].shape, dtype=np.float32)
-    if y_sizes is None:
-        y_sizes = np.ones(arrays[0].shape, dtype=np.float32)
+    # x_sizes/y_sizes contract: None (unit pixels, shapes may differ), a single
+    # grid (every array must share its shape), or a per-array list. None is kept
+    # as None below so heterogeneous-shaped arrays pool correctly.
+    validate_pixel_sizes(arrays, x_sizes, y_sizes)
 
     if isinstance(bins, int):
         # Variable-aware, NaN-aware auto-bin range using the physical grids.
         # Spans all arrays when x_sizes/y_sizes are per-array lists.
-        auto_lower, auto_upper = _auto_bin_range(variable, x_sizes, y_sizes, len(arrays))
+        auto_lower, auto_upper = _auto_bin_range(variable, x_sizes, y_sizes, arrays)
         # A space-filling object attains the upper bound exactly (e.g. a full-row
         # object has width == max row extent). Give the top edge a hair of
         # headroom so the float32 measurement, upcast to float64, still lands
@@ -229,13 +258,17 @@ def finite_array_size_distribution(
 
         # Encase the array in nans to ensure objects in contact with the edge are considered truncated
         array = encase_in_value(array)
+        # Match the array's encasing on the pixel-size grids. None stays None
+        # (unit pixels) so heterogeneous-shaped arrays need no shared grid.
+        xs_enc = encase_in_value(xs) if xs is not None else None
+        ys_enc = encase_in_value(ys) if ys is not None else None
 
         if variable in ['summed perimeter','area','height','width']:
             no_truncated = remove_structures_touching_border_nan(array)
             truncated_only = array - no_truncated
 
-            truncated_counts += array_size_distribution(truncated_only, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
-            nontruncated_counts += array_size_distribution(no_truncated, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+            truncated_counts += array_size_distribution(truncated_only, x_sizes=xs_enc, y_sizes=ys_enc, variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+            nontruncated_counts += array_size_distribution(no_truncated, x_sizes=xs_enc, y_sizes=ys_enc, variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
         elif variable == 'nested perimeter':  # nested perimeter
             # For this case, an edge-touching cloud may have a hole but the hole does not touch the edge. 
             # We want to count the perimeter of the hole in the non-edge-touching histogram.
@@ -243,7 +276,7 @@ def finite_array_size_distribution(
             no_truncated = remove_structures_touching_border_nan(array)
             truncated_but_with_holes_that_are_not_truncated = array - no_truncated
 
-            nontruncated_counts += array_size_distribution(no_truncated, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+            nontruncated_counts += array_size_distribution(no_truncated, x_sizes=xs_enc, y_sizes=ys_enc, variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
 
 
 
@@ -253,14 +286,14 @@ def finite_array_size_distribution(
             # print(cloud_holes_nontruncated)
             # exit()
 
-            nontruncated_counts += array_size_distribution(cloud_holes_nontruncated, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+            nontruncated_counts += array_size_distribution(cloud_holes_nontruncated, x_sizes=xs_enc, y_sizes=ys_enc, variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
 
             # cloud_holes_truncated = cloud_holes_truncated_and_nontruncated - cloud_holes_nontruncated
 
             # Now fill in those nontruncated holes to obtain holes+clouds that are only truncated
             truncated_only = truncated_but_with_holes_that_are_not_truncated + cloud_holes_nontruncated
 
-            truncated_counts += array_size_distribution(truncated_only, x_sizes=encase_in_value(xs), y_sizes=encase_in_value(ys), variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
+            truncated_counts += array_size_distribution(truncated_only, x_sizes=xs_enc, y_sizes=ys_enc, variable=variable, wrap=None, bins=bin_edges, bin_logs=bin_logs)[1]
         else: raise ValueError(f'variable {variable} not supported')
 
     # Find index where number of edge clouds is greater than threshold times total number of clouds
@@ -347,6 +380,11 @@ def finite_array_powerlaw_exponent(
         log10 of the counts used in the regression. Only returned if
         ``return_counts=True``, as a single nested tuple
         ``(exponent, (log_bin_middles, log_counts))``.
+
+    .. versionchanged:: 2.1.0
+        Arrays of differing shapes may now be pooled in one call. See
+        :func:`finite_array_size_distribution` for the ``x_sizes``/``y_sizes``
+        contract and the misalignment bug this fixes.
 
     .. versionchanged:: 2.0.0
         No longer returns an uncertainty estimate. The previously reported
@@ -483,43 +521,51 @@ def array_size_distribution(
       structure in the x- or y- direction.
     """
     variable = _normalize_variable(variable)
-    if x_sizes is None:
-        x_sizes = np.ones(array.shape, dtype=np.float32)
-    if y_sizes is None:
-        y_sizes = np.ones(array.shape, dtype=np.float32)
+    # x_sizes/y_sizes contract (single-array form): None => unit pixels, or a
+    # grid matching this array's shape. Kept as None where possible so the area
+    # path can use unit weights directly (no grid allocation, shape-agnostic).
+    validate_pixel_sizes([array], x_sizes, y_sizes)
     if variable in ('area', 'summed perimeter', 'height', 'width'):
         # Pad non-periodic edges with NaN so get_structure_* (which assumes
         # full toroidal periodicity) correctly treats them as domain boundaries.
         if wrap is None:
             array = encase_in_value(array, value=np.nan)
-            x_sizes = encase_in_value(x_sizes, value=np.nan)
-            y_sizes = encase_in_value(y_sizes, value=np.nan)
+            if x_sizes is not None:
+                x_sizes = encase_in_value(x_sizes, value=np.nan)
+            if y_sizes is not None:
+                y_sizes = encase_in_value(y_sizes, value=np.nan)
         elif wrap == 'sides':
             # Periodic left-right, pad top-bottom only
             array = np.concatenate([np.full((1, array.shape[1]), np.nan), array,
                                     np.full((1, array.shape[1]), np.nan)], axis=0)
-            x_sizes = np.concatenate([np.full((1, x_sizes.shape[1]), np.nan), x_sizes,
-                                      np.full((1, x_sizes.shape[1]), np.nan)], axis=0)
-            y_sizes = np.concatenate([np.full((1, y_sizes.shape[1]), np.nan), y_sizes,
-                                      np.full((1, y_sizes.shape[1]), np.nan)], axis=0)
+            if x_sizes is not None:
+                x_sizes = np.concatenate([np.full((1, x_sizes.shape[1]), np.nan), x_sizes,
+                                          np.full((1, x_sizes.shape[1]), np.nan)], axis=0)
+            if y_sizes is not None:
+                y_sizes = np.concatenate([np.full((1, y_sizes.shape[1]), np.nan), y_sizes,
+                                          np.full((1, y_sizes.shape[1]), np.nan)], axis=0)
         # wrap='both': fully periodic, no padding needed
 
         lab, nm, nl = label_structures(array, structure, wrap='both')
         if lab is None:
             to_bin = np.array([], dtype=np.float32)
         elif variable == 'area':
+            # None x/y_sizes -> unit pixel areas (no grid needed, any shape).
             a = get_structure_areas(lab, nm, nl, x_sizes, y_sizes)
             to_bin = a[a > 0]
         elif variable == 'summed perimeter':
-            p = get_structure_perimeters(lab, nm, nl, x_sizes, y_sizes)
+            xs_g, ys_g = _unit_grids_if_none(x_sizes, y_sizes, lab.shape)
+            p = get_structure_perimeters(lab, nm, nl, xs_g, ys_g)
             to_bin = p[p > 0]
         elif variable in ('height', 'width'):
-            h, w = get_structure_height_width(lab, nm, nl, x_sizes, y_sizes)
+            xs_g, ys_g = _unit_grids_if_none(x_sizes, y_sizes, lab.shape)
+            h, w = get_structure_height_width(lab, nm, nl, xs_g, ys_g)
             a = get_structure_areas(lab, nm, nl, x_sizes, y_sizes)
             valid = a > 0
             to_bin = h[valid] if variable == 'height' else w[valid]
     elif variable == 'nested perimeter':
-        to_bin = get_every_boundary_perimeter(array, x_sizes, y_sizes, wrap=wrap)
+        xs_g, ys_g = _unit_grids_if_none(x_sizes, y_sizes, array.shape)
+        to_bin = get_every_boundary_perimeter(array, xs_g, ys_g, wrap=wrap)
     else:
         raise ValueError(f'Unsupported variable: {variable}')
 

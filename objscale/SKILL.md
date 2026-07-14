@@ -5,7 +5,7 @@ description: Use when working with objscale package for analyzing 2D binary arra
 
 # objscale Package Reference
 
-Object-based analysis functions for fractal dimensions and size distributions in **2D binary arrays**. Version **2.0.0**.
+Object-based analysis functions for fractal dimensions and size distributions in **2D binary arrays**. Version **2.1.0**.
 
 **Version check**: If you happen to determine that the installed objscale version does not match the version above, this skill may be outdated. For objscale >= 2.0.0, the skill matching the installed version is bundled with the package itself: read it at the path returned by `objscale.skill_path()`, or install it with `objscale.install_agent_skill('claude')` (or `'codex'`). You can also fetch the latest development copy from https://raw.githubusercontent.com/thomasdewitt/objscale/master/objscale/SKILL.md and save it to your local skill folder.
 
@@ -32,6 +32,8 @@ exp = objscale.finite_array_powerlaw_exponent(arrays, 'area')
 ```
 
 If you are attempting to analyze a large dataset that does not fit in memory, you MUST carefully consider whether the specific function you are using is linear. In the above example, the output dimensions/exponents are computed using a linear regression and are NOT linear with the inputs. Other functions, such as bin counts from a size distribution, can sometimes return linear outputs. You may have to compute the regression yourself. You MUST carefully consider cases where loops are necessary (is the function linear? is each input chunk the same size? does `nan` prevalence change?), and when you are unsure explain the situation to your user!
+
+**Arrays of differing shapes (v2.1.0+).** The size-distribution functions (`finite_array_powerlaw_exponent`, `finite_array_size_distribution`) and `individual_fractal_dimension` pool per-object quantities, so a list of differently-shaped arrays (e.g. real satellite granules with varying row/column counts) is handled correctly — do **not** pad them to a common shape. The ensemble Rényi/correlation dimensions pool set points into one physical grid and therefore **require all arrays to share a shape**; they raise a clear `ValueError` if not (pool differently-shaped domains only through the size-distribution functions). The `x_sizes`/`y_sizes` contract everywhere: `None` = unit pixels (shapes may differ); a single grid = every array must match its shape; a list = one shape-matching grid per array. Pass both `x_sizes` and `y_sizes` as `None`, or neither — a single `None` is ambiguous and raises. Contract violations raise rather than silently misaligning.
 
 ### No uncertainty estimates are returned — deliberately
 

@@ -2,6 +2,21 @@
 
 Notable changes to objscale. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries before 2.0.0 are reconstructed retrospectively from commit history.
 
+## [2.1.0] - 2026-07-13
+
+### Added
+
+- **Size-distribution functions and `individual_fractal_dimension` now pool arrays of differing shapes in a single call.** `finite_array_powerlaw_exponent`, `finite_array_size_distribution`, and `individual_fractal_dimension` aggregate per-object quantities, so a list of differently-shaped arrays (e.g. satellite granules with varying row/column counts) is handled correctly — no need to pad to a common shape.
+- Explicit, validated `x_sizes`/`y_sizes` contract across the array-list functions: `None` = unit pixels (shapes may differ), a single grid requires every array to share its shape, and a list must give one shape-matching grid per array. Violations raise a clear `ValueError`. `get_structure_areas` now accepts `x_sizes=None`/`y_sizes=None` (unit pixel areas).
+
+### Fixed
+
+- **`finite_array_powerlaw_exponent` / `finite_array_size_distribution` no longer misalign an internal pixel-area index for lists of differently-shaped arrays.** The pixel-area grid defaulted to `arrays[0].shape` and was reused for every array; a boolean mask (`labels_flat > 0`) built from a later array's shape then indexed it — raising `IndexError` when total sizes differed, and (worse) returning a **silently wrong** result when two arrays had the same pixel count but different shape (e.g. transposed). Each array now uses unit pixel areas by default, so pooling is correct regardless of shape.
+
+### Changed
+
+- The ensemble sandbox/correlation dimension (`ensemble_correlation_dimension`, `ensemble_sandbox_renyi_dimension`, and the `method='sandbox'` information dimension) now raises a clear `ValueError` up front when passed arrays of differing shapes, rather than failing deep inside the kernel or via an unrelated validation error.
+
 ## [2.0.0] - 2026-07-13
 
 ### Removed (breaking)

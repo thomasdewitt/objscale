@@ -127,8 +127,8 @@ def get_structure_areas(
     labelled_array: NDArray,
     nan_mask: NDArray,
     n_labels: int,
-    x_sizes: NDArray,
-    y_sizes: NDArray,
+    x_sizes: NDArray | None = None,
+    y_sizes: NDArray | None = None,
 ) -> NDArray:
     """
     Calculate areas of labelled structures.
@@ -141,10 +141,13 @@ def get_structure_areas(
         Boolean NaN mask from :func:`label_structures`.
     n_labels : int
         Number of labels from :func:`label_structures`.
-    x_sizes : np.ndarray
+    x_sizes : np.ndarray or None
         Pixel sizes in horizontal direction, same shape as labelled_array.
-    y_sizes : np.ndarray
+        Pass both x_sizes and y_sizes as None for unit pixels (areas are pixel
+        counts); passing exactly one as None raises ValueError.
+    y_sizes : np.ndarray or None
         Pixel sizes in vertical direction, same shape as labelled_array.
+        See x_sizes for the None contract.
 
     Returns
     -------
@@ -154,6 +157,11 @@ def get_structure_areas(
         ``get_structure_*`` functions called on the same labelled array.
     """
     _validate_labelled(labelled_array)
+    if (x_sizes is None) != (y_sizes is None):
+        raise ValueError(
+            'x_sizes and y_sizes must both be None (unit pixels) or both '
+            'provided; a single None is ambiguous.'
+        )
     return _compute_areas(labelled_array, x_sizes, y_sizes, n_labels)
 
 
@@ -162,13 +170,21 @@ def _compute_areas(labelled_array, x_sizes, y_sizes, n_labels):
 
     Returns array of shape (n_labels,) — index i is label i+1.
     Merged labels from periodic wrapping may have area 0.
+
+    With both ``x_sizes`` and ``y_sizes`` None, the unit-area fast path
+    (``weights=None``, integer bincount) is used, which also makes the result
+    independent of any grid shape. Otherwise both grids must be provided and
+    share ``labelled_array``'s shape (mixed None is rejected by the caller).
     """
-    pixel_areas = (x_sizes * y_sizes).ravel()
     labels_flat = labelled_array.ravel()
     mask = labels_flat > 0
+    if x_sizes is None and y_sizes is None:
+        weights = None  # unit pixel areas (bincount returns integer counts)
+    else:
+        weights = (x_sizes * y_sizes).ravel()[mask]
     areas = np.bincount(
         labels_flat[mask].astype(np.intp),
-        weights=pixel_areas[mask],
+        weights=weights,
         minlength=n_labels + 1,
     )
     return areas[1:].astype(np.float32)

@@ -8,6 +8,55 @@ import numba
 __all__ = ['linear_regression', 'encase_in_value', 'set_num_threads']
 
 
+def validate_pixel_sizes(arrays, x_sizes, y_sizes):
+    """Validate the x_sizes/y_sizes contract against a list of arrays.
+
+    The contract, shared by every function that accepts per-array pixel-size
+    grids (size distributions, individual fractal dimension):
+
+    - ``None``: unit pixels are assumed; no shared grid is required, so arrays
+      of differing shapes are allowed.
+    - a single ``np.ndarray``: it is applied to every array, so every array
+      must share its shape.
+    - a ``list``: one grid per array, each matching its array's shape.
+
+    Raises ``ValueError`` with an actionable message on any violation. Does not
+    return anything; call it for its side effect before consuming the grids.
+    """
+    if (x_sizes is None) != (y_sizes is None):
+        raise ValueError(
+            'x_sizes and y_sizes must both be None (unit pixels) or both '
+            'provided; a single None is ambiguous.'
+        )
+    for name, sizes in (('x_sizes', x_sizes), ('y_sizes', y_sizes)):
+        if sizes is None:
+            continue
+        if isinstance(sizes, list):
+            if len(sizes) != len(arrays):
+                raise ValueError(
+                    f'{name} is a list of length {len(sizes)} but there are '
+                    f'{len(arrays)} arrays; when {name} is a list it must have '
+                    f'exactly one grid per array.'
+                )
+            for i, (s, a) in enumerate(zip(sizes, arrays)):
+                if s.shape != a.shape:
+                    raise ValueError(
+                        f'{name}[{i}] has shape {s.shape} but arrays[{i}] has '
+                        f'shape {a.shape}; each pixel-size grid must match its '
+                        f'array.'
+                    )
+        else:
+            for i, a in enumerate(arrays):
+                if sizes.shape != a.shape:
+                    raise ValueError(
+                        f'{name} is a single grid of shape {sizes.shape} but '
+                        f'arrays[{i}] has shape {a.shape}; a single {name} grid '
+                        f'requires every array to share that shape. Pass a list '
+                        f'of per-array grids, or None for unit pixels, when '
+                        f'array shapes differ.'
+                    )
+
+
 def set_num_threads(n: int) -> None:
     """
     Set the number of threads used for parallel computations.
